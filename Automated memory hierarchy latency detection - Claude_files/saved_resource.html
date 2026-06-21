@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<!-- saved from url=(0012)about:srcdoc -->
+<html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html-to-image/1.11.13/html-to-image.min.js" integrity="sha512-iZ2ORl595Wx6miw+GuadDet4WQbdSWS3JLMoNfY8cRGoEFy6oT3G9IbcrBeL6AfkgpA51ETt/faX6yLV+/gFJg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+      (function() {
+        const originalConsole = window.console;
+        window.console = {
+          log: (...args) => {
+            originalConsole.log(...args);
+            window.parent.postMessage({ type: 'console', message: args.join(' ') }, '*');
+          },
+          error: (...args) => {
+            originalConsole.error(...args);
+            window.parent.postMessage({ type: 'console', message: 'Error: ' + args.join(' ') }, '*');
+          },
+          warn: (...args) => {
+            originalConsole.warn(...args);
+            window.parent.postMessage({ type: 'console', message: 'Warning: ' + args.join(' ') }, '*');
+          }
+        };
+
+        let requestId = 0;
+        let callbacksMap = new Map();
+        let streamControllers = new Map();
+        
+        window.claude = {
+          complete: (prompt) => {
+            return new Promise((resolve, reject) => {
+              const id = requestId++;
+              callbacksMap.set(id, { resolve, reject });
+              window.parent.postMessage({ type: 'claudeComplete', id, prompt }, '*');
+            });
+          }
+        };
+
+        window.storage = {
+          get: (key, shared = false) => {
+            return new Promise((resolve, reject) => {
+              const id = requestId++;
+              callbacksMap.set(id, { resolve, reject });
+              window.parent.postMessage({ type: 'storageGet', id, key, shared }, '*');
+            });
+          },
+          set: (key, value, shared = false) => {
+            return new Promise((resolve, reject) => {
+              const id = requestId++;
+              callbacksMap.set(id, { resolve, reject });
+              window.parent.postMessage({ type: 'storageSet', id, key, value, shared }, '*');
+            });
+          },
+          delete: (key, shared = false) => {
+            return new Promise((resolve, reject) => {
+              const id = requestId++;
+              callbacksMap.set(id, { resolve, reject });
+              window.parent.postMessage({ type: 'storageDelete', id, key, shared }, '*');
+            });
+          },
+          list: (prefix, shared = false) => {
+            return new Promise((resolve, reject) => {
+              const id = requestId++;
+              callbacksMap.set(id, { resolve, reject });
+              window.parent.postMessage({ type: 'storageList', id, prefix, shared }, '*');
+            });
+          }
+        };
+
+        let pendingBlobs = new Map();
+        URL.createObjectURL = (blob) => {
+          // Store the blob and create an ID and URL for it
+          const blobId = `blob-${Date.now()}-${Math.random()}`;
+          pendingBlobs.set(blobId, blob);
+          return `blob-request://${blobId}`;
+        };
+
+        URL.revokeObjectURL = (url) => {
+          // Remove the blob from our store
+          const blobId = url.replace("blob-request://", "");
+          pendingBlobs.delete(blobId);
+        };
+
+        const getBlobFromURL = (url) => {
+          const blobId = url.replace("blob-request://", "");
+          return pendingBlobs.get(blobId);
+        };
+
+        // Override global fetch with streaming support
+        window.fetch = (url, init = {}) => {
+          return new Promise((resolve, reject) => {
+            const id = requestId++;
+            const channelId = `fetch-${id}-${Date.now()}`;
+            
+            callbacksMap.set(id, { 
+              resolve: (response) => {
+                // Create a ReadableStream for the response body
+                const stream = new ReadableStream({
+                  start(controller) {
+                    streamControllers.set(channelId, controller);
+                  },
+                  cancel() {
+                    streamControllers.delete(channelId);
+                  }
+                });
+                
+                // Create and return the Response with the stream
+                resolve(new Response(stream, {
+                  status: response.status,
+                  statusText: response.statusText,
+                  headers: response.headers
+                }));
+              },
+              reject,
+              channelId
+            });
+            
+            window.parent.postMessage({
+              type: 'proxyFetch',
+              id,
+              url,
+              init,
+              channelId
+            }, '*');
+          });
+        };
+
+        window.addEventListener('message', async (event) => {
+          if (event.data.type === 'takeScreenshot') {
+            const rootElement = document.getElementById('artifacts-component-root-html');
+            if (!rootElement) {
+              window.parent.postMessage({
+                type: 'screenshotError',
+                error: new Error('Root element not found'),
+              }, '*');
+            }
+            const screenshot = await htmlToImage.toPng(rootElement, {
+              imagePlaceholder:
+                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAA1JREFUGFdjePDgwX8ACOQDoNsk0PMAAAAASUVORK5CYII=",
+            });
+            window.parent.postMessage({
+              type: 'screenshotData',
+              data: screenshot,
+            }, '*');
+          } else if (event.data.type === 'claudeComplete') {
+            const callback = callbacksMap.get(event.data.id);
+            if (event.data.error) {
+              callback.reject(new Error(event.data.error));
+            } else {
+              callback.resolve(event.data.completion);
+            }
+            callbacksMap.delete(event.data.id);
+          } else if (event.data.type === 'proxyFetchResponse') {
+            const callback = callbacksMap.get(event.data.id);
+            if (event.data.error) {
+              callback.reject(new Error(event.data.error));
+              callbacksMap.delete(event.data.id);
+            } else {
+              // Initial response with headers, status, etc.
+              callback.resolve({
+                status: event.data.status,
+                statusText: event.data.statusText,
+                headers: event.data.headers
+              });
+              // Don't delete the callback yet if streaming
+              if (!event.data.body) {
+                callbacksMap.delete(event.data.id);
+              }
+            }
+          } else if (event.data.type === 'proxyFetchStream') {
+            // Handle streaming data chunks
+            const controller = streamControllers.get(event.data.channelId);
+            if (controller) {
+              if (event.data.error) {
+                controller.error(new Error(event.data.error));
+                streamControllers.delete(event.data.channelId);
+              } else if (event.data.done) {
+                controller.close();
+                streamControllers.delete(event.data.channelId);
+                // Clean up the callback
+                const callback = Array.from(callbacksMap.entries()).find(
+                  ([_, value]) => value.channelId === event.data.channelId
+                );
+                if (callback) {
+                  callbacksMap.delete(callback[0]);
+                }
+              } else if (event.data.chunk) {
+                controller.enqueue(new Uint8Array(event.data.chunk));
+              }
+            }
+          } else if (event.data.type === 'storageGet') {
+            const callback = callbacksMap.get(event.data.id);
+            if (event.data.error) {
+              callback.reject(new Error(event.data.error));
+            } else {
+              callback.resolve(event.data.result);
+            }
+            callbacksMap.delete(event.data.id);
+          } else if (event.data.type === 'storageSet') {
+            const callback = callbacksMap.get(event.data.id);
+            if (event.data.error) {
+              callback.reject(new Error(event.data.error));
+            } else {
+              callback.resolve(event.data.result);
+            }
+            callbacksMap.delete(event.data.id);
+          } else if (event.data.type === 'storageDelete') {
+            const callback = callbacksMap.get(event.data.id);
+            if (event.data.error) {
+              callback.reject(new Error(event.data.error));
+            } else {
+              callback.resolve(event.data.result);
+            }
+            callbacksMap.delete(event.data.id);
+          } else if (event.data.type === 'storageList') {
+            const callback = callbacksMap.get(event.data.id);
+            if (event.data.error) {
+              callback.reject(new Error(event.data.error));
+            } else {
+              callback.resolve(event.data.result);
+            }
+            callbacksMap.delete(event.data.id);
+          }
+        });
+
+        window.addEventListener('click', (event) => {
+          const isEl = event.target instanceof HTMLElement;
+          if (!isEl) return;
+    
+          // find ancestor links
+          const linkEl = event.target.closest("a");
+          if (!linkEl || !linkEl.href) return;
+    
+          event.preventDefault();
+          event.stopImmediatePropagation();
+    
+          if (linkEl.href.startsWith("blob-request:")) {
+            const blob = getBlobFromURL(linkEl.href);
+            if (!blob) return;
+            void blob.arrayBuffer().then((data) => {
+              window.parent.postMessage({
+                type: "downloadFile",
+                filename: linkEl.download,
+                data,
+                mimeType: blob.type || "application/octet-stream",
+              });
+            });
+          } else if (linkEl.href.startsWith("data:")) {
+            const [header, base64Data] = linkEl.href.split(",");
+            const mimeMatch = header.match(/data:([^;]+)/);
+            const mimeType = mimeMatch ? mimeMatch[1] : "application/octet-stream";
+            const binaryString = atob(base64Data);
+            const data = Uint8Array.from(binaryString, (c) =>
+              c.charCodeAt(0),
+            ).buffer;
+            window.parent.postMessage({
+              type: "downloadFile",
+              filename: linkEl.download,
+              data,
+              mimeType,
+            });
+          } else {
+            let linkUrl;
+            try {
+              linkUrl = new URL(linkEl.href);
+            } catch (error) {
+              return;
+            }
+    
+            if (linkUrl.hostname === window.location.hostname) return;
+      
+            window.parent.postMessage({
+              type: 'openExternal',
+              href: linkEl.href,
+            }, '*');
+          }
+      });
+
+        const originalOpen = window.open;
+        window.open = function (url) {
+          window.parent.postMessage({
+            type: "openExternal",
+            href: url,
+          }, "*");
+        };
+
+        window.addEventListener('error', (event) => {
+          window.parent.postMessage({ type: 'console', message: 'Uncaught Error: ' + event.message }, '*');
+        });
+      })();
+    </script>
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Auto-Echo Project — Gantt Chart</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #faf9f7;
+      --surface: #ffffff;
+      --border: rgba(0,0,0,0.1);
+      --border-light: rgba(0,0,0,0.06);
+      --text-primary: #1a1a18;
+      --text-secondary: #5a5a56;
+      --text-muted: #9a9a94;
+      --radius: 8px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #181816;
+        --surface: #222220;
+        --border: rgba(255,255,255,0.1);
+        --border-light: rgba(255,255,255,0.05);
+        --text-primary: #e8e6e0;
+        --text-secondary: #a8a6a0;
+        --text-muted: #686864;
+      }
+    }
+
+    body {
+      font-family: 'Georgia', 'Times New Roman', serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      min-height: 100vh;
+      padding: 2.5rem 2rem;
+    }
+
+    .page {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .title-block {
+      margin-bottom: 2rem;
+      border-bottom: 0.5px solid var(--border);
+      padding-bottom: 1.25rem;
+    }
+
+    .project-label {
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: normal;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+      margin-bottom: 4px;
+    }
+
+    .subtitle {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 1.5rem;
+    }
+
+    .leg-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      color: var(--text-secondary);
+      letter-spacing: 0.04em;
+    }
+
+    .leg-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    .chart-wrap {
+      background: var(--surface);
+      border: 0.5px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem 1.5rem 1.25rem;
+    }
+
+    .week-header {
+      display: flex;
+      border-bottom: 0.5px solid var(--border);
+      padding-bottom: 8px;
+      margin-bottom: 12px;
+    }
+
+    .week-header-label {
+      flex-shrink: 0;
+    }
+
+    .week-ticks {
+      flex: 1;
+      position: relative;
+      height: 16px;
+    }
+
+    .week-tick {
+      position: absolute;
+      transform: translateX(-50%);
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .phase-label {
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin: 14px 0 6px 0;
+    }
+
+    .task-row {
+      display: flex;
+      align-items: center;
+      margin-bottom: 7px;
+    }
+
+    .task-name {
+      font-size: 12px;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex-shrink: 0;
+      padding-right: 12px;
+    }
+
+    .bar-area {
+      flex: 1;
+      position: relative;
+      height: 22px;
+    }
+
+    .bar {
+      position: absolute;
+      height: 18px;
+      top: 2px;
+      border-radius: 3px;
+    }
+
+    .m-line {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 0.5px;
+      background: var(--border-light);
+    }
+
+    .phase-divider {
+      height: 0.5px;
+      background: var(--border-light);
+      margin: 6px 0 2px 0;
+    }
+
+    .milestone-row {
+      display: flex;
+      align-items: center;
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 0.5px solid var(--border);
+    }
+
+    .milestone-area {
+      flex: 1;
+      position: relative;
+      height: 36px;
+    }
+
+    .milestone-pin {
+      position: absolute;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      top: 0;
+    }
+
+    .diamond {
+      width: 10px;
+      height: 10px;
+      transform: rotate(45deg);
+      border-radius: 1px;
+      flex-shrink: 0;
+    }
+
+    .milestone-text {
+      font-family: 'Courier New', monospace;
+      font-size: 9px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .footer {
+      margin-top: 1.5rem;
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      color: var(--text-muted);
+      letter-spacing: 0.05em;
+      display: flex;
+      justify-content: space-between;
+    }
+  </style>
+</head>
+<body id="artifacts-component-root-html">
+<div class="page">
+
+  <div class="title-block">
+    <div class="project-label">MSc Advanced Computer Science — QMUL · Project Proposal</div>
+    <h1>Auto-Echo: Project Timeline</h1>
+    <div class="subtitle">17 March 2025 — 9 July 2025 &nbsp;·&nbsp; 16 weeks</div>
+  </div>
+
+  <div class="legend">
+    <div class="leg-item"><div class="leg-dot" style="background:#534AB7"></div>Research</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#0F6E56"></div>Development</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#BA7517"></div>Evaluation</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#185FA5"></div>Writing</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#993C1D"></div>Submission</div>
+  </div>
+
+  <div class="chart-wrap">
+    <div id="gantt"><div style="display:flex;border-bottom:0.5px solid var(--border);padding-bottom:8px;margin-bottom:12px;">
+  <div style="width:140px;flex-shrink:0;"></div>
+  <div style="flex:1;position:relative;height:16px;"><span class="week-tick" style="left:0%;">17 Mar</span><span class="week-tick" style="left:12.280701754385964%;">31 Mar</span><span class="week-tick" style="left:24.561403508771928%;">14 Apr</span><span class="week-tick" style="left:36.84210526315789%;">28 Apr</span><span class="week-tick" style="left:49.122807017543856%;">12 May</span><span class="week-tick" style="left:61.40350877192983%;">26 May</span><span class="week-tick" style="left:73.68421052631578%;">9 Jun</span><span class="week-tick" style="left:85.96491228070175%;">23 Jun</span><span class="week-tick" style="left:98.24561403508771%;">7 Jul</span></div></div><div class="phase-label" style="padding-left:140px;">Phase 1 — Research &amp; Setup</div><div class="task-row">
+      <div class="task-name" style="width:140px;">Literature review</div>
+      <div class="bar-area"><div class="m-line" style="left:18.421052631578945%;"></div><div class="m-line" style="left:36.84210526315789%;"></div><div class="m-line" style="left:71.05263157894737%;"></div><div class="m-line" style="left:100%;"></div><div class="bar" style="left:0%;width:18.421052631578945%;background:#534AB7;"></div>
+      </div></div><div class="task-row">
+      <div class="task-name" style="width:140px;">Probe artifact study</div>
+      <div class="bar-area"><div class="m-line" style="left:18.421052631578945%;"></div><div class="m-line" style="left:36.84210526315789%;"></div><div class="m-line" style="left:71.05263157894737%;"></div><div class="m-line" style="left:100%;"></div><div class="bar" style="left:6.140350877192982%;width:15.789473684210524%;background:#534AB7;"></div>
+      </div></div><div class="phase-divider" style="margin-left:140px;"></div><div class="phase-label" style="padding-left:140px;">Phase 2 — Data Collection</div><div class="task-row">
+      <div class="task-name" style="width:140px;">Memory probe impl.</div>
+      <div class="bar-area"><div class="m-line" style="left:18.421052631578945%;"></div><div class="m-line" style="left:36.84210526315789%;"></div><div class="m-line" style="left:71.05263157894737%;"></div><div class="m-line" style="left:100%;"></div><div class="bar" style="left:18.421052631578945%;width:18.421052631578945%;background:#0F6E56;"></div>
+      </div></div><div class="task-row">
+      <div class="task-name" style="width:140px;">Preprocessing pipeline</div>
+      <div class="bar-area"><div class="m-line" style="left:18.421052631578945%;"></div><div class="m-line" style="left:36.84210526315789%;"></div><div class="m-line" style="left:71.05263157894737%;"></div><div class="m-line" style="left:100%;"></div><div class="bar" style="left:30.701754385964914%;width:18.42105263157894%;background:#0F6E56;"></div>
+      </div></div><div class="phase-divider" style="margin-left:140px;"></div><div class="phase-label" style="padding-left:140px;">Phase 3 — ML Development</div><div class="task-row">
+      <div class="task-name" style="width:140px;">Clustering engine</div>
+      <div class="bar-area"><div class="m-line" style="left:18.421052631578945%;"></div><div class="m-line" style="left:36.84210526315789%;"></div><div class="m-line" style="left:71.05263157894737%;"></div><div class="m-line" style="left:100%;"></div><div class="bar" style="left:42.98245614035088%;width:18.421052631578952%;background:#0F6E56;"></div>
+      </div></div><div class="task-row">
+      <div class="task-name" style="width:140px;">Model selection logic</div>
+      <div class="bar-area"><div class="m-line" style="left:18.421052631578945%;"></div><div class="m-line" style="left:36.84210526315789%;"></div><div class="m-line" style="left:71.05263157894737%;"></div><div class="m-line" style="left:100%;"></div><div class="bar" style="left:55.26315789473685%;width:15.78947368421052%;background:#0F6E56;"></div>
+      </div></div><div class="phase-divider" style="margin-left:140px;"></div><div class="phase-label" style="padding-left:140px;">Phase 4 — Evaluation</div><div class="task-row">
+      <div class="task-name" style="width:140px;">Validation vs hardware</div>
+      <div class="bar-area"><div class="m-line" style="left:18.421052631578945%;"></div><div class="m-line" style="left:36.84210526315789%;"></div><div class="m-line" style="left:71.05263157894737%;"></div><div class="m-line" style="left:100%;"></div><div class="bar" style="left:67.54385964912281%;width:14.035087719298247%;background:#BA7517;"></div>
+      </div></div><div class="task-row">
+      <div class="task-name" style="width:140px;">Comparative analysis</div>
+      <div class="bar-area"><div class="m-line" style="left:18.421052631578945%;"></div><div class="m-line" style="left:36.84210526315789%;"></div><div class="m-line" style="left:71.05263157894737%;"></div><div class="m-line" style="left:100%;"></div><div class="bar" style="left:75.43859649122807%;width:12.280701754385959%;background:#BA7517;"></div>
+      </div></div><div class="phase-divider" style="margin-left:140px;"></div><div class="phase-label" style="padding-left:140px;">Phase 5 — Write-up &amp; Submission</div><div class="task-row">
+      <div class="task-name" style="width:140px;">Dissertation writing</div>
+      <div class="bar-area"><div class="m-line" style="left:18.421052631578945%;"></div><div class="m-line" style="left:36.84210526315789%;"></div><div class="m-line" style="left:71.05263157894737%;"></div><div class="m-line" style="left:100%;"></div><div class="bar" style="left:55.26315789473685%;width:40.35087719298245%;background:#185FA5;"></div>
+      </div></div><div class="task-row">
+      <div class="task-name" style="width:140px;">Final review &amp; submit</div>
+      <div class="bar-area"><div class="m-line" style="left:18.421052631578945%;"></div><div class="m-line" style="left:36.84210526315789%;"></div><div class="m-line" style="left:71.05263157894737%;"></div><div class="m-line" style="left:100%;"></div><div class="bar" style="left:93.85964912280701%;width:6.1403508771929864%;background:#993C1D;"></div>
+      </div></div><div class="phase-divider" style="margin-left:140px;"></div><div class="milestone-row">
+  <div style="width:140px;flex-shrink:0;font-family:&#39;Courier New&#39;,monospace;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);">Milestones</div>
+  <div class="milestone-area"><div class="milestone-pin" style="left:18.421052631578945%;">
+    <div class="diamond" style="background:#534AB7;"></div>
+    <span class="milestone-text">Lit. review done</span>
+  </div><div class="milestone-pin" style="left:36.84210526315789%;">
+    <div class="diamond" style="background:#0F6E56;"></div>
+    <span class="milestone-text">Dataset ready</span>
+  </div><div class="milestone-pin" style="left:71.05263157894737%;">
+    <div class="diamond" style="background:#BA7517;"></div>
+    <span class="milestone-text">Framework complete</span>
+  </div><div class="milestone-pin" style="left:100%;">
+    <div class="diamond" style="background:#993C1D;"></div>
+    <span class="milestone-text">Submission</span>
+  </div></div></div></div>
+  </div>
+
+  <div class="footer">
+    <span>Auto-Echo Framework · Automated Latency Cluster Detection</span>
+    <span>Generated for MSc ACS Project Proposal</span>
+  </div>
+
+</div>
+
+<script>
+const LABEL_W = 140;
+const START = new Date('2025-03-17');
+const END   = new Date('2025-07-09');
+
+function pct(dateStr) {
+  const d = new Date(dateStr);
+  return Math.max(0, Math.min(100, (d - START) / (END - START) * 100));
+}
+function bw(s, e) { return pct(e) - pct(s); }
+
+const phases = [
+  {
+    label: 'Phase 1 — Research & Setup',
+    tasks: [
+      { name: 'Literature review',      start: '2025-03-17', end: '2025-04-07', color: '#534AB7', tc: '#EEEDFE' },
+      { name: 'Probe artifact study',   start: '2025-03-24', end: '2025-04-11', color: '#534AB7', tc: '#EEEDFE' },
+    ]
+  },
+  {
+    label: 'Phase 2 — Data Collection',
+    tasks: [
+      { name: 'Memory probe impl.',     start: '2025-04-07', end: '2025-04-28', color: '#0F6E56', tc: '#E1F5EE' },
+      { name: 'Preprocessing pipeline', start: '2025-04-21', end: '2025-05-12', color: '#0F6E56', tc: '#E1F5EE' },
+    ]
+  },
+  {
+    label: 'Phase 3 — ML Development',
+    tasks: [
+      { name: 'Clustering engine',      start: '2025-05-05', end: '2025-05-26', color: '#0F6E56', tc: '#E1F5EE' },
+      { name: 'Model selection logic',  start: '2025-05-19', end: '2025-06-06', color: '#0F6E56', tc: '#E1F5EE' },
+    ]
+  },
+  {
+    label: 'Phase 4 — Evaluation',
+    tasks: [
+      { name: 'Validation vs hardware', start: '2025-06-02', end: '2025-06-18', color: '#BA7517', tc: '#FAEEDA' },
+      { name: 'Comparative analysis',   start: '2025-06-11', end: '2025-06-25', color: '#BA7517', tc: '#FAEEDA' },
+    ]
+  },
+  {
+    label: 'Phase 5 — Write-up & Submission',
+    tasks: [
+      { name: 'Dissertation writing',   start: '2025-05-19', end: '2025-07-04', color: '#185FA5', tc: '#E6F1FB' },
+      { name: 'Final review & submit',  start: '2025-07-02', end: '2025-07-09', color: '#993C1D', tc: '#FAECE7' },
+    ]
+  }
+];
+
+const milestones = [
+  { date: '2025-04-07', label: 'Lit. review done',    color: '#534AB7' },
+  { date: '2025-04-28', label: 'Dataset ready',        color: '#0F6E56' },
+  { date: '2025-06-06', label: 'Framework complete',   color: '#BA7517' },
+  { date: '2025-07-09', label: 'Submission',           color: '#993C1D' },
+];
+
+let html = '';
+
+// Week tick header
+html += `<div style="display:flex;border-bottom:0.5px solid var(--border);padding-bottom:8px;margin-bottom:12px;">
+  <div style="width:${LABEL_W}px;flex-shrink:0;"></div>
+  <div style="flex:1;position:relative;height:16px;">`;
+
+let wd = new Date(START);
+while (wd <= END) {
+  const p = pct(wd.toISOString().slice(0,10));
+  const label = wd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  html += `<span class="week-tick" style="left:${p}%;">${label}</span>`;
+  wd = new Date(wd.getTime() + 14 * 86400000);
+}
+html += `</div></div>`;
+
+// Phases and tasks
+phases.forEach(phase => {
+  html += `<div class="phase-label" style="padding-left:${LABEL_W}px;">${phase.label}</div>`;
+  phase.tasks.forEach(task => {
+    const left = pct(task.start);
+    const width = bw(task.start, task.end);
+    html += `<div class="task-row">
+      <div class="task-name" style="width:${LABEL_W}px;">${task.name}</div>
+      <div class="bar-area">`;
+    milestones.forEach(m => {
+      html += `<div class="m-line" style="left:${pct(m.date)}%;"></div>`;
+    });
+    html += `<div class="bar" style="left:${left}%;width:${width}%;background:${task.color};"></div>
+      </div></div>`;
+  });
+  html += `<div class="phase-divider" style="margin-left:${LABEL_W}px;"></div>`;
+});
+
+// Milestones row
+html += `<div class="milestone-row">
+  <div style="width:${LABEL_W}px;flex-shrink:0;font-family:'Courier New',monospace;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);">Milestones</div>
+  <div class="milestone-area">`;
+
+milestones.forEach(m => {
+  const p = pct(m.date);
+  html += `<div class="milestone-pin" style="left:${p}%;">
+    <div class="diamond" style="background:${m.color};"></div>
+    <span class="milestone-text">${m.label}</span>
+  </div>`;
+});
+
+html += `</div></div>`;
+
+document.getElementById('gantt').innerHTML = html;
+</script>
+
+
+</body></html>
