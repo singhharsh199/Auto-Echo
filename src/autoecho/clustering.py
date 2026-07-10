@@ -12,7 +12,7 @@ def evaluate_clusters(X, labels):
     """Calculate Silhouette Score to evaluate cluster quality."""
     if len(set(labels)) < 2:
         return -1.0 # Invalid clustering
-    return silhouette_score(X, labels, sample_size=10000) # Sample to speed up computation
+    return silhouette_score(X, labels, sample_size=10000, random_state=42) # Sample to speed up computation
 
 def discover_memory_levels_kmeans(df: pd.DataFrame, column: str = 'latency_ns', max_k: int = 7) -> tuple:
     """

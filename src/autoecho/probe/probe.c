@@ -2,6 +2,7 @@
 #include <Python.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <time.h>
 
 #if defined(__x86_64__) || defined(__i386__)
 #include <x86intrin.h>
@@ -61,6 +62,8 @@ static PyObject* collect_latencies(PyObject* self, PyObject* args) {
     if (!latencies_list) {
         return NULL;
     }
+
+    srand((unsigned)time(NULL));
 
     size_t array_size = 1024 * 1024 * 64; // 64 MB array
     volatile uint8_t *array = (volatile uint8_t *)malloc(array_size);
