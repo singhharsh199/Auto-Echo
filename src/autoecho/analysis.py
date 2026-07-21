@@ -1,0 +1,225 @@
+"""Level-discovery engine for the working-set-size latency curve.
+
+Two complementary, unsupervised approaches are provided and reconciled:
+
+1. Change-point detection (primary). A cache of capacity C keeps latency flat
+   while the working set fits (wss <= C) and steps up once it overflows. The
+   number of memory levels therefore equals the number of plateaus in the
+   latency-vs-log(wss) curve, and each cache's capacity is the working-set size
+   at the plateau-to-rise transition. This is detected with the ``ruptures``
+   PELT algorithm on the log-latency signal, which auto-selects the number of
+   breakpoints. Working on log-latency (not raw ns) keeps the small L1->L2 step
+   and the large L2->DRAM step comparable in magnitude.
+
+2. Clustering (K-Means / GMM / DBSCAN) of the per-size latency values, with the
+   number of clusters chosen by the Silhouette Score. This satisfies the
+   project's unsupervised-ML objective and provides an independent estimate of
+   the level count to cross-check against (1).
+
+Boundaries use robust percentile statistics rather than raw min/max, so a
+single mis-measured point cannot drag a cache boundary.
+"""
+import warnings
+
+import numpy as np
+import pandas as pd
+from scipy.signal import medfilt
+from sklearn.cluster import DBSCAN, KMeans
+from sklearn.metrics import silhouette_score
+from sklearn.mixture import GaussianMixture
+
+import ruptures as rpt
+
+warnings.filterwarnings("ignore")
+
+# Latency-ordered level names. No "WPQ" (a persistent-memory / write-pending-queue
+# concept from Klimis et al.'s Optane setup that does not exist on a commodity
+# CPU cache hierarchy). Extra levels beyond this list get a generic name.
+LEVEL_NAMES = ["L1 Cache", "L2 Cache", "L3 Cache", "L4 / DRAM", "DRAM"]
+
+
+def _human_bytes(n: float) -> str:
+    for unit in ["B", "KiB", "MiB", "GiB"]:
+        if abs(n) < 1024.0:
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024.0
+    return f"{n:.1f} TiB"
+
+
+def detect_levels_changepoint(
+    curve: pd.DataFrame,
+    penalty: float = 3.0,
+    min_size: int = 3,
+    merge_ratio: float = 1.4,
+    smooth_kernel: int = 3,
+) -> pd.DataFrame:
+    """Detect memory levels as plateaus in the latency curve.
+
+    :param curve: DataFrame with ``wss_bytes`` and ``latency_ns`` columns,
+        sorted by ``wss_bytes``.
+    :param penalty: PELT penalty on the log-latency signal. Higher = fewer,
+        coarser segments.
+    :param merge_ratio: adjacent plateaus whose latency ratio is below this are
+        merged (they represent the same physical level, over-segmented by noise).
+    :returns: one row per detected level with ``level_name``, latency
+        statistics, and ``capacity_bytes`` (the wss at which this level's cache
+        overflows -- i.e. the inferred cache capacity; NaN for the final/DRAM
+        level, which has no upper cache boundary).
+    """
+    curve = curve.sort_values("wss_bytes").reset_index(drop=True)
+    y = curve["latency_ns"].values.astype(float)
+
+    # Light median smoothing is appropriate here: unlike the i.i.d. sample path,
+    # this is a genuine ordered sweep curve, so neighbours share a level.
+    k = smooth_kernel if smooth_kernel % 2 == 1 else smooth_kernel + 1
+    if len(y) >= k:
+        y = medfilt(y, kernel_size=k)
+
+    signal = np.log(np.maximum(y, 1e-6)).reshape(-1, 1)
+
+    algo = rpt.Pelt(model="l2", min_size=min_size).fit(signal)
+    bkps = algo.predict(pen=penalty)  # segment end indices (exclusive), last == n
+
+    # Build [start, end) segments.
+    segments = []
+    start = 0
+    for end in bkps:
+        segments.append((start, end))
+        start = end
+
+    # Robust per-segment latency (median), then merge look-alike neighbours.
+    def seg_latency(seg):
+        return float(np.median(curve["latency_ns"].values[seg[0]:seg[1]]))
+
+    merged = [segments[0]]
+    for seg in segments[1:]:
+        prev = merged[-1]
+        if seg_latency(seg) / max(seg_latency(prev), 1e-9) < merge_ratio:
+            merged[-1] = (prev[0], seg[1])  # same level -> extend
+        else:
+            merged.append(seg)
+
+    n_levels = len(merged)
+    rows = []
+    for i, (s, e) in enumerate(merged):
+        lat = curve["latency_ns"].values[s:e]
+        wss = curve["wss_bytes"].values[s:e]
+        name = LEVEL_NAMES[i] if i < len(LEVEL_NAMES) else f"Level {i + 1}"
+        if i == len(LEVEL_NAMES) - 1 or i == n_levels - 1:
+            name = "DRAM" if i == n_levels - 1 else name
+        # Capacity = last working-set size still served at this level's speed,
+        # i.e. the largest wss in the plateau before it steps up.
+        capacity = float(wss.max()) if i < n_levels - 1 else float("nan")
+        rows.append(
+            {
+                "level_name": name,
+                "capacity_bytes": capacity,
+                "capacity_human": _human_bytes(capacity) if capacity == capacity else "-",
+                "latency_ns_median": float(np.median(lat)),
+                "latency_ns_p5": float(np.percentile(lat, 5)),
+                "latency_ns_p95": float(np.percentile(lat, 95)),
+                "wss_lo_bytes": int(wss.min()),
+                "wss_hi_bytes": int(wss.max()),
+                "n_points": int(e - s),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def cluster_level_count(
+    curve: pd.DataFrame, max_k: int = 6, algorithm: str = "kmeans"
+) -> tuple[int, float]:
+    """Independent estimate of the number of levels by clustering the per-size
+    latency values. Returns ``(best_k, best_silhouette)``.
+
+    Clustering is performed on log-latency so that widely separated levels
+    (L1 ~1.5 ns vs DRAM ~130 ns) do not swamp the finer L1/L2 gap."""
+    X = np.log(np.maximum(curve["latency_ns"].values, 1e-6)).reshape(-1, 1)
+    n = len(X)
+    best_k, best_score = 1, -1.0
+
+    for k in range(2, min(max_k, n - 1) + 1):
+        if algorithm == "kmeans":
+            labels = KMeans(n_clusters=k, random_state=42, n_init=10).fit_predict(X)
+        elif algorithm == "gmm":
+            labels = GaussianMixture(n_components=k, random_state=42).fit_predict(X)
+        else:
+            raise ValueError(f"unknown algorithm {algorithm!r}")
+        if len(set(labels)) < 2:
+            continue
+        score = silhouette_score(X, labels, random_state=42)
+        if score > best_score:
+            best_k, best_score = k, score
+    return best_k, best_score
+
+
+def elbow_method(curve: pd.DataFrame, max_k: int = 6) -> tuple:
+    """Estimate the number of levels by the Elbow Method on K-Means inertia
+    (within-cluster sum of squares) over log-latency.
+
+    The elbow is located automatically as the point of maximum distance from the
+    chord joining the first and last (k, inertia) points -- the standard
+    knee-detection heuristic, removing the manual "look at the plot" step.
+
+    :returns: ``(elbow_k, [(k, inertia), ...])``.
+    """
+    X = np.log(np.maximum(curve["latency_ns"].values, 1e-6)).reshape(-1, 1)
+    n = len(X)
+    ks = list(range(1, min(max_k, n - 1) + 1))
+    inertias = []
+    for k in ks:
+        inertias.append(
+            float(KMeans(n_clusters=k, random_state=42, n_init=10).fit(X).inertia_)
+        )
+    if len(ks) < 3:
+        return (ks[-1] if ks else 1), list(zip(ks, inertias))
+
+    ks_a = np.array(ks, dtype=float)
+    iner = np.array(inertias, dtype=float)
+    # Normalise both axes to [0, 1] so the distance metric is scale-free.
+    x = (ks_a - ks_a.min()) / (np.ptp(ks_a) or 1.0)
+    y = (iner - iner.min()) / ((iner.max() - iner.min()) or 1.0)
+    x1, y1, x2, y2 = x[0], y[0], x[-1], y[-1]
+    denom = np.hypot(y2 - y1, x2 - x1) or 1.0
+    dist = np.abs((y2 - y1) * x - (x2 - x1) * y + x2 * y1 - y2 * x1) / denom
+    elbow_k = int(ks_a[int(np.argmax(dist))])
+    return elbow_k, list(zip(ks, inertias))
+
+
+def penalty_sensitivity(curve: pd.DataFrame, penalties=None) -> dict:
+    """Report the detected level count across a range of PELT penalties, to show
+    the result is not an artefact of one hyper-parameter choice."""
+    if penalties is None:
+        penalties = [1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 10.0]
+    return {p: len(detect_levels_changepoint(curve, penalty=p)) for p in penalties}
+
+
+def cluster_level_count_dbscan(curve: pd.DataFrame, eps: float = 0.3) -> int:
+    """Density-based level-count estimate (DBSCAN). Unlike K-Means/GMM it does
+    not need the number of clusters in advance and treats sparse transition
+    points as noise. ``eps`` is in log-latency units."""
+    X = np.log(np.maximum(curve["latency_ns"].values, 1e-6)).reshape(-1, 1)
+    labels = DBSCAN(eps=eps, min_samples=3).fit_predict(X)
+    return len(set(labels) - {-1})  # exclude noise label
+
+
+def analyze(curve: pd.DataFrame, penalty: float = 3.0) -> dict:
+    """Run the full level-discovery analysis and reconcile the estimators."""
+    levels = detect_levels_changepoint(curve, penalty=penalty)
+    k_kmeans, sil_kmeans = cluster_level_count(curve, algorithm="kmeans")
+    k_gmm, sil_gmm = cluster_level_count(curve, algorithm="gmm")
+    k_dbscan = cluster_level_count_dbscan(curve)
+    k_elbow, elbow_curve = elbow_method(curve)
+
+    return {
+        "levels": levels,
+        "n_levels_changepoint": len(levels),
+        "n_levels_kmeans": k_kmeans,
+        "silhouette_kmeans": sil_kmeans,
+        "n_levels_gmm": k_gmm,
+        "silhouette_gmm": sil_gmm,
+        "n_levels_dbscan": k_dbscan,
+        "n_levels_elbow": k_elbow,
+        "elbow_curve": elbow_curve,
+        "penalty_sensitivity": penalty_sensitivity(curve),
+    }

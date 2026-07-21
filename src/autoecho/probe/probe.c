@@ -4,8 +4,14 @@
 #include <stdlib.h>
 #include <time.h>
 
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
+
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
+#if !defined(_MSC_VER)
 #include <x86intrin.h>
+#endif
 
 static inline uint64_t get_time(void) {
     unsigned int ui;
@@ -52,7 +58,7 @@ static inline void memory_fence(void) {
 
 static PyObject* collect_latencies(PyObject* self, PyObject* args) {
     int num_samples;
-    int mode; // 0 = L1/L2 (no flush), 1 = WPQ/DRAM (flush)
+    int mode; // 0 = L1/L2 (no flush), 1 = deep memory / DRAM (flush, x86 only)
     
     if (!PyArg_ParseTuple(args, "ii", &num_samples, &mode)) {
         return NULL;
