@@ -8,7 +8,7 @@ Harsh Raj Singh
 *ec25303@qmul.ac.uk*
 
 ## 1. Abstract
-The memory hierarchy of modern computing architectures is increasingly complex, sparsely documented, and abstracted away from user-space applications. This limits the ability of software engineers to optimise performance-critical applications. This research introduces Auto-Echo, a cross-platform framework designed to empirically discover a machine’s memory hierarchy (L1, L2, L3 caches, and DRAM) purely from user-space, without requiring administrative privileges. By bridging low-level systems programming with unsupervised machine learning, Auto-Echo attempts to autonomously classify hardware boundaries. This formative paper details the initial Phase 1 methodology—a randomised-access C probe combined with K-Means clustering—and critically analyses the preliminary results. Testing on Apple Silicon revealed three barriers: coarse timer quantisation, the absence of a user-space cache-flush primitive on ARM, and a measurement-design flaw in which each timed read was preceded by a write to the same address, guaranteeing an L1 hit by construction. These findings provide a clear roadmap for the final submission, motivating a pointer-chasing working-set-size methodology with batch-amortised timing and change-point detection.
+The memory hierarchy of modern computing architectures is increasingly complex, sparsely documented, and abstracted away from user-space applications. This limits the ability of software engineers to optimise performance-critical applications. This research introduces Auto-Echo, a cross-platform framework designed to empirically discover a machine’s memory hierarchy (L1, L2, L3 caches, and DRAM) purely from user-space, without requiring administrative privileges. By bridging low-level systems programming with unsupervised machine learning, Auto-Echo attempts to autonomously classify hardware boundaries. This paper details the initial methodology—a randomised-access C probe combined with K-Means clustering—and critically analyses the empirical results. Testing on Apple Silicon revealed three barriers: coarse timer quantisation, the absence of a user-space cache-flush primitive on ARM, and a measurement-design flaw in which each timed read was preceded by a write to the same address, guaranteeing an L1 hit by construction. These findings provide a clear roadmap for the final submission, motivating a pointer-chasing working-set-size methodology with batch-amortised timing and change-point detection.
 
 ---
 
@@ -33,7 +33,7 @@ The foundation of this research is the memory echolocation methodology of Klimis
 
 ---
 
-## 4. Methodology (Phase 1 Architecture)
+## 4. Methodology (System Architecture)
 The initial implementation of the Auto-Echo framework consists of a four-stage pipeline.
 
 ### 4.1 Data Collection (The C Probe)
@@ -53,9 +53,9 @@ The framework concludes by automatically generating a Markdown validation report
 ---
 
 ## 5. Preliminary Results & Critical Analysis
-While the Phase 1 architecture successfully proves the viability of an end-to-end Python/C machine learning pipeline, initial testing on an Apple Silicon (M-series) environment revealed severe measurement-level data corruption.
+While the system architecture successfully proves the viability of an end-to-end Python/C machine learning pipeline, initial testing on an Apple Silicon (M-series) environment revealed severe measurement-level data corruption.
 
-**Table 1: Example Phase 1 Validation Output on Apple Silicon**
+**Table 1: Empirical Validation Output on Apple Silicon**
 
 | Inferred level | Range [ns] | Mean [ns] | Samples |
 | :--- | :---: | :---: | :---: |
@@ -80,7 +80,7 @@ Finally, two reproducibility gaps were noted: the C probe’s `rand()` generator
 ---
 
 ## 6. Discussion & Future Work
-The measurement barriers discovered in Phase 1 provide an excellent foundation for critical analysis and mandate a structural shift in the methodology. The following upgrades will form the core of the final dissertation submission.
+The measurement barriers discovered in initial evaluation provide an excellent foundation for critical analysis and mandate a structural shift in the methodology. The following upgrades will form the core of the final dissertation submission.
 
 ### 6.1 Working-Set-Size Sweeps with Pointer Chasing
 To eliminate the write-before-read flaw and defeat both the prefetcher and timer quantisation, the C probe will be rewritten around a working-set-size (WSS) sweep with pointer chasing:
@@ -96,7 +96,7 @@ K-Means fundamentally assumes compact, roughly spherical clusters, but latency-v
 ---
 
 ## 7. Conclusion
-The initial Phase 1 development of the Auto-Echo framework has successfully established the core infrastructure required to capture low-level memory timings and automatically process them through an unsupervised machine learning pipeline. Crucially, empirical testing exposed exactly where the naive measurement design fails on modern hardware: a timer whose tick dwarfs an L1 hit, the absence of a user-space flush on ARM, and a write-before-read pattern that guaranteed L1 residency of every measured access. By pivoting to a batch-amortised, pointer-chasing WSS methodology with robust percentile boundaries and change-point detection, the final project is well positioned to achieve accurate, architecture-agnostic memory echolocation.
+The initial development of the Auto-Echo framework has successfully established the core infrastructure required to capture low-level memory timings and automatically process them through an unsupervised machine learning pipeline. Crucially, empirical testing exposed exactly where the naive measurement design fails on modern hardware: a timer whose tick dwarfs an L1 hit, the absence of a user-space flush on ARM, and a write-before-read pattern that guaranteed L1 residency of every measured access. By pivoting to a batch-amortised, pointer-chasing WSS methodology with robust percentile boundaries and change-point detection, the final project is well positioned to achieve accurate, architecture-agnostic memory echolocation.
 
 ---
 

@@ -36,14 +36,14 @@ def main():
     clustered_df, model = discover_memory_levels_kmeans(clean_df, max_k=6)
     
     print("\n[4/4] Mapping clusters and generating reports...")
-    stats_df = map_clusters_to_levels(clustered_df)
+    clustered_df, stats_df = map_clusters_to_levels(clustered_df)
     
     os.makedirs(args.output_dir, exist_ok=True)
     report_path = os.path.join(args.output_dir, "validation_report.md")
     plot_path = os.path.join(args.output_dir, "latency_distribution.png")
     
     generate_report(stats_df, report_path)
-    plot_latency_distribution(clustered_df, output_path=plot_path)
+    plot_latency_distribution(clustered_df, cluster_stats=stats_df, output_path=plot_path)
     
     print("\nDone! Auto-Echo pipeline completed successfully.")
 

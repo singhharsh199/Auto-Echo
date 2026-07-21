@@ -68,10 +68,10 @@ def discover_memory_levels_gmm(df: pd.DataFrame, column: str = 'latency_ns', max
     df_result['cluster'] = best_model.predict(X)
     return df_result, best_model
 
-def map_clusters_to_levels(df: pd.DataFrame, column: str = 'latency_ns') -> pd.DataFrame:
+def map_clusters_to_levels(df: pd.DataFrame, column: str = 'latency_ns') -> tuple:
     """
     Map unordered cluster IDs to logical memory levels (L1, L2, L3, etc.) by sorting them based on mean latency.
-    Returns a DataFrame containing the boundaries for each discovered level.
+    Attaches 'level_name' and 'inferred_level' columns to the DataFrame and returns (df, cluster_stats).
     """
     # Calculate stats for each cluster
     cluster_stats = df.groupby('cluster')[column].agg(['min', 'max', 'mean', 'count']).reset_index()
@@ -79,12 +79,31 @@ def map_clusters_to_levels(df: pd.DataFrame, column: str = 'latency_ns') -> pd.D
     # Sort clusters by mean latency
     cluster_stats = cluster_stats.sort_values(by='mean').reset_index(drop=True)
     
-    # Assign logical names
-    level_names = ['L1 Cache', 'L2 Cache', 'L3 Cache', 'WPQ / Memory Controller', 'DRAM', 'Swap/Disk']
+    # Standard hardware memory hierarchy names matching Klimis et al. 2025
+    level_names = [
+        'L1 Cache',
+        'L2 Cache',
+        'L3 Cache',
+        'WPQ',
+        'DRAM',
+        'Swap'
+    ]
     
-    # Ensure we don't exceed our names list
     num_clusters = len(cluster_stats)
     assigned_names = level_names[:num_clusters] if num_clusters <= len(level_names) else [f'Level {i}' for i in range(1, num_clusters + 1)]
     
     cluster_stats['Level_Name'] = assigned_names
-    return cluster_stats
+    cluster_stats['Display_Label'] = cluster_stats.apply(
+        lambda row: f"{row['Level_Name']} (~{row['mean']:.1f} ns)", axis=1
+    )
+    
+    # Mappings
+    cluster_to_name = dict(zip(cluster_stats['cluster'], cluster_stats['Level_Name']))
+    cluster_to_label = dict(zip(cluster_stats['cluster'], cluster_stats['Display_Label']))
+    
+    df_result = df.copy()
+    df_result['level_name'] = df_result['cluster'].map(cluster_to_name)
+    df_result['inferred_level'] = df_result['cluster'].map(cluster_to_label)
+    
+    return df_result, cluster_stats
+
