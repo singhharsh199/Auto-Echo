@@ -1,7 +1,169 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+import numpy as np
 import os
+
+
+def plot_memory_mountain(curve, levels=None, output_path=None, sweeps=None):
+    """Plot the working-set-size latency curve (the 'memory mountain') with
+    detected level plateaus shaded and inferred cache capacities marked.
+
+    :param curve: DataFrame with ``wss_bytes`` / ``wss_kib`` and ``latency_ns``.
+    :param levels: optional DataFrame from analysis.detect_levels_changepoint,
+        used to shade plateaus and draw capacity boundaries.
+    :param sweeps: optional list of per-run curve DataFrames; if given, a
+        min–max variability band across runs is shaded to show measurement
+        stability (error bars).
+    """
+    sns.set_theme(style="whitegrid")
+    fig, ax = plt.subplots(figsize=(11, 6.5))
+
+    wss_kib = curve["wss_bytes"].values / 1024.0
+
+    if sweeps is not None and len(sweeps) > 1:
+        # All sweeps share the same deterministic WSS grid -> stack and band.
+        mat = np.vstack([
+            s.sort_values("wss_bytes")["latency_ns"].values for s in sweeps
+        ])
+        x = np.sort(curve["wss_bytes"].values) / 1024.0
+        ax.fill_between(x, mat.min(axis=0), mat.max(axis=0), color="#1f4e79",
+                        alpha=0.15, zorder=1,
+                        label=f"min–max over {len(sweeps)} runs")
+
+    ax.plot(wss_kib, curve["latency_ns"].values, "-o", color="#1f4e79",
+            markersize=3, linewidth=1.2, zorder=3, label="Measured latency")
+
+    band_colors = ["#ffcccc", "#c8e6c9", "#c7d8ff", "#f5d5c5", "#e0e0e0"]
+    if levels is not None and not levels.empty:
+        for i, row in levels.reset_index(drop=True).iterrows():
+            lo = row["wss_lo_bytes"] / 1024.0
+            hi = row["wss_hi_bytes"] / 1024.0
+            ax.axvspan(lo, hi, color=band_colors[i % len(band_colors)], alpha=0.45,
+                       zorder=1,
+                       label=f"{row['level_name']} (~{row['latency_ns_median']:.1f} ns)")
+            cap = row.get("capacity_bytes", float("nan"))
+            if cap == cap:  # not NaN -> a real cache boundary
+                ax.axvline(cap / 1024.0, color="#b00020", linestyle="--",
+                           linewidth=1.2, zorder=2)
+                # Stagger label heights so adjacent boundaries don't overlap.
+                y_frac = 0.92 if i % 2 == 0 else 0.55
+                ax.text(cap / 1024.0, ax.get_ylim()[1] * y_frac,
+                        f"  {row['capacity_human']}", color="#b00020",
+                        fontsize=8, rotation=90, va="top", ha="left")
+
+    ax.set_xscale("log", base=2)
+    ax.set_yscale("log")
+    ax.set_xlabel("Working-set size (KiB) [log2]", fontsize=11, fontweight="bold")
+    ax.set_ylabel("Average access latency (ns) [log]", fontsize=11, fontweight="bold")
+    ax.set_title("Auto-Echo Memory Latency Curve (Pointer-Chase Sweep)",
+                 fontsize=13, fontweight="bold", pad=12)
+    ax.legend(loc="upper left", frameon=True, framealpha=0.9, fontsize=9)
+    plt.tight_layout()
+
+    if output_path:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        print(f"Plot saved to {output_path}")
+    else:
+        plt.show()
+    plt.close()
+
+
+def plot_model_selection(analysis, output_path=None):
+    """Plot the Elbow (K-Means inertia) and Silhouette curves side by side, so
+    the automatic model-selection choice is visible and comparable (project
+    definition: Elbow Method AND Silhouette Score, applied and compared)."""
+    sns.set_theme(style="whitegrid")
+    fig, ax1 = plt.subplots(figsize=(8, 5))
+    ks = [k for k, _ in analysis["elbow_curve"]]
+    inertias = [v for _, v in analysis["elbow_curve"]]
+    ax1.plot(ks, inertias, "-o", color="#1f4e79", label="K-Means inertia (Elbow)")
+    ax1.axvline(analysis["n_levels_elbow"], color="#b00020", linestyle="--",
+                label=f"Elbow k = {analysis['n_levels_elbow']}")
+    ax1.set_xlabel("Number of clusters k", fontsize=11, fontweight="bold")
+    ax1.set_ylabel("Within-cluster sum of squares (inertia)", fontsize=10)
+    ax1.set_title("Automatic Model Selection: Elbow vs Silhouette",
+                  fontsize=12, fontweight="bold")
+    ax1.axvline(analysis["n_levels_kmeans"], color="#009E73", linestyle=":",
+                label=f"Silhouette k = {analysis['n_levels_kmeans']}")
+    ax1.legend(loc="upper right", fontsize=9)
+    plt.tight_layout()
+    if output_path:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        print(f"Plot saved to {output_path}")
+    else:
+        plt.show()
+    plt.close()
+
+
+def generate_wss_report(levels, analysis, validation, output_path=None,
+                        comparison=None, capacity_acc=None):
+    """Generate the Markdown validation report for the WSS methodology."""
+    r = "# Auto-Echo Validation Report\n\n"
+    r += "## 1. Discovered Memory Hierarchy\n\n"
+    r += "| Level | Inferred capacity | Median latency | p5–p95 latency | WSS range | Points |\n"
+    r += "|---|---|---|---|---|---|\n"
+    for _, row in levels.iterrows():
+        r += (f"| **{row['level_name']}** | {row['capacity_human']} | "
+              f"{row['latency_ns_median']:.2f} ns | "
+              f"{row['latency_ns_p5']:.2f}–{row['latency_ns_p95']:.2f} ns | "
+              f"{row['wss_lo_bytes']//1024}–{row['wss_hi_bytes']//1024} KiB | "
+              f"{row['n_points']} |\n")
+
+    r += "\n## 2. Level-Count Agreement Across Estimators\n\n"
+    r += "| Estimator | Levels detected |\n|---|---|\n"
+    r += f"| Change-point (PELT) | {analysis['n_levels_changepoint']} |\n"
+    r += f"| K-Means + Silhouette | {analysis['n_levels_kmeans']} (score {analysis['silhouette_kmeans']:.3f}) |\n"
+    r += f"| K-Means + Elbow | {analysis['n_levels_elbow']} |\n"
+    r += f"| GMM + Silhouette | {analysis['n_levels_gmm']} (score {analysis['silhouette_gmm']:.3f}) |\n"
+    r += f"| DBSCAN | {analysis['n_levels_dbscan']} |\n"
+
+    ps = analysis.get("penalty_sensitivity")
+    if ps:
+        r += "\n### 2.1 Change-Point Penalty Sensitivity\n\n"
+        r += "| Penalty | " + " | ".join(str(p) for p in ps) + " |\n"
+        r += "|---|" + "---|" * len(ps) + "\n"
+        r += "| Levels | " + " | ".join(str(v) for v in ps.values()) + " |\n"
+
+    if comparison is not None:
+        r += "\n## 3. Level-Count Estimator Comparison (Agreement & Stability)\n\n"
+        r += "Ranked over " + (f"{capacity_acc['n_sweeps']} independent sweeps" if capacity_acc else "the sweep")
+        r += " by count correctness then stability (lower std = more consistent). "
+        r += ("Note: the clustering estimators only *count* levels; change-point "
+              "detection additionally *localises* each cache's capacity, so it is "
+              "the productive method for hierarchy mapping (see Section 4).\n\n")
+        r += "| Rank | Method | Mean levels | Std (stability) | Modal | Expected ≥ | Count OK |\n"
+        r += "|---|---|---|---|---|---|---|\n"
+        for _, row in comparison.iterrows():
+            r += (f"| {row['rank']} | {row['method']} | {row['mean_levels']} | "
+                  f"{row['std_levels']} | {row['modal_levels']} | {row['expected_min']} | "
+                  f"{'✅' if row['count_ok'] else '❌'} |\n")
+
+    r += "\n## 4. Validation Against Hardware Ground Truth\n\n"
+    r += f"Overall accuracy: **{validation['accuracy']*100:.1f}%** "
+    r += f"({validation['n_matched']}/{validation['n_ground_truth']} documented caches matched within a factor of 2).\n"
+    if capacity_acc and capacity_acc.get("mean_abs_pct_error") is not None:
+        r += (f"\nMean absolute capacity error (matched caches, "
+              f"{capacity_acc['n_sweeps']} sweeps): "
+              f"**{capacity_acc['mean_abs_pct_error']:.1f}%**.\n")
+    r += "\n| Cache | Ground truth | Detected | Error (octaves) | Error (%) | Match |\n"
+    r += "|---|---|---|---|---|---|\n"
+    for m in validation["matches"]:
+        det = f"{m['detected_bytes']/1024:.0f} KiB" if m["detected_bytes"] else "—"
+        err = f"{m['error_octaves']:.2f}" if m["error_octaves"] is not None else "—"
+        pct = f"{m['pct_error']:+.1f}%" if m.get("pct_error") is not None else "—"
+        r += (f"| {m['cache']} | {m['ground_truth_bytes']/1024:.0f} KiB | {det} | "
+              f"{err} | {pct} | {'✅' if m['match'] else '❌'} |\n")
+
+    if output_path:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "w") as f:
+            f.write(r)
+        print(f"Report saved to {output_path}")
+    else:
+        print(r)
 
 def plot_latency_distribution(df: pd.DataFrame, cluster_stats: pd.DataFrame = None, column: str = 'latency_ns', output_path: str = None):
     """
@@ -16,7 +178,7 @@ def plot_latency_distribution(df: pd.DataFrame, cluster_stats: pd.DataFrame = No
         '#ffcccc', # L1 Cache (Light Red / Pink)
         '#c8e6c9', # L2 Cache (Light Green)
         '#c7d8ff', # L3 Cache (Light Blue)
-        '#e1bee7', # WPQ / Memory Controller (Light Purple)
+        '#e1bee7', # DRAM / Memory Controller (Light Purple)
         '#f5d5c5', # DRAM (Light Brown / Salmon)
         '#e0e0e0'  # Swap / OS Overhead (Light Gray)
     ]

@@ -40,7 +40,7 @@ def collect(num_samples: int = 100000, mode: int = 0) -> pd.DataFrame:
     Collect memory access latencies.
     
     :param num_samples: Number of memory accesses to time.
-    :param mode: 0 for L1/L2 natural eviction, 1 to force deep memory (WPQ/DRAM) using clflush.
+    :param mode: 0 for L1/L2 natural eviction, 1 to force deep memory (DRAM) using clflush (x86 only).
     :return: Pandas DataFrame containing latencies in nanoseconds.
     """
     # Call the C-Extension

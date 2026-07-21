@@ -79,14 +79,15 @@ def map_clusters_to_levels(df: pd.DataFrame, column: str = 'latency_ns') -> tupl
     # Sort clusters by mean latency
     cluster_stats = cluster_stats.sort_values(by='mean').reset_index(drop=True)
     
-    # Standard hardware memory hierarchy names matching Klimis et al. 2025
+    # Latency-ordered commodity cache-hierarchy names. "WPQ" (a persistent-memory
+    # / write-pending-queue concept from Klimis et al.'s Optane setup) is
+    # deliberately excluded: it does not exist on a commodity CPU cache hierarchy.
     level_names = [
         'L1 Cache',
         'L2 Cache',
         'L3 Cache',
-        'WPQ',
         'DRAM',
-        'Swap'
+        'Deeper / Swap'
     ]
     
     num_clusters = len(cluster_stats)
