@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from autoecho.analysis import (
+    changepoint_level_count,
     cluster_level_count,
     cluster_level_count_dbscan,
     detect_levels_changepoint,
@@ -20,11 +21,15 @@ from autoecho.analysis import (
 from autoecho.validation import validate
 
 
-def _counts_for_sweep(curve: pd.DataFrame, penalty: float) -> dict:
+def _counts_for_sweep(curve: pd.DataFrame, penalty: float = None) -> dict:
+    # ``penalty`` is retained for signature compatibility but the change-point
+    # entry uses the INDEPENDENT cost-knee counter, not the productive hybrid
+    # (whose count is, by construction, the Silhouette count) -- otherwise the
+    # comparison would be circular.
     k_kmeans, _ = cluster_level_count(curve, algorithm="kmeans")
     k_gmm, _ = cluster_level_count(curve, algorithm="gmm")
     return {
-        "Change-point (PELT)": len(detect_levels_changepoint(curve, penalty=penalty)),
+        "Change-point (cost-knee)": changepoint_level_count(curve),
         "K-Means + Silhouette": k_kmeans,
         "GMM + Silhouette": k_gmm,
         "K-Means + Elbow": elbow_method(curve)[0],

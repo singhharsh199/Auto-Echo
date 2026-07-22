@@ -59,9 +59,11 @@ Running the pipeline writes to the output directory:
 | `--max-mb N` | Largest working-set size (raise to ≥512 for large-L3/DRAM machines) |
 | `--runs N` | Independent sweeps for stability/error-bar evaluation |
 | `--repeats N` | Repeats per size (minimum is kept) |
-| `--penalty F` | Change-point sensitivity (lower ⇒ more levels) |
+| `--hops N` | Minimum pointer-chase hops per timing window (default 2^20) |
+| `--penalty F` | Change-point penalty **override**; omit for automatic level selection (the default) |
 | `--seed N` | RNG seed (reproducible permutations) |
 | `--method samples` | The documented naive baseline (retained to reproduce its failure) |
+| `--samples N`, `--mode {0,1}` | Sample count / access mode for the legacy `samples` baseline |
 
 ## Repository layout
 ```
@@ -91,4 +93,3 @@ monotonic clock. See `docs/05_Cross_Platform_Guide.md` and
 | `Python.h: No such file` (Linux) | Install `python3-dev` / `python3-devel`. |
 | `Microsoft Visual C++ 14.0 … required` (Windows) | Install the MSVC C++ Build Tools, reopen the shell. |
 | Import fails after copying the folder between machines | Delete any stale `*.so`/`*.pyd` and rebuild with `pip install -e .` — compiled extensions are platform-specific. |
-```

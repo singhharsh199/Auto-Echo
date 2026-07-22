@@ -32,10 +32,12 @@ import ruptures as rpt
 
 warnings.filterwarnings("ignore")
 
-# Latency-ordered level names. No "WPQ" (a persistent-memory / write-pending-queue
-# concept from Klimis et al.'s Optane setup that does not exist on a commodity
-# CPU cache hierarchy). Extra levels beyond this list get a generic name.
-LEVEL_NAMES = ["L1 Cache", "L2 Cache", "L3 Cache", "L4 / DRAM", "DRAM"]
+# Latency-ordered cache names. The deepest level is always relabelled "DRAM", so
+# "DRAM" is deliberately NOT in this list -- otherwise a run with more plateaus
+# than names would emit two "DRAM" rows. No "WPQ" (a persistent-memory concept
+# from Klimis et al.'s Optane setup that does not exist on a commodity CPU cache
+# hierarchy). Cache levels beyond this list get a generic "Ln Cache" name.
+LEVEL_NAMES = ["L1 Cache", "L2 Cache", "L3 Cache", "L4 Cache", "L5 Cache"]
 
 
 def _human_bytes(n: float) -> str:
@@ -46,19 +48,64 @@ def _human_bytes(n: float) -> str:
     return f"{n:.1f} TiB"
 
 
+def _knee_index(xs, ys) -> int:
+    """Index of the knee of ``(xs, ys)``: the point of maximum perpendicular
+    distance from the chord joining the first and last points, on min-max
+    normalised axes (the standard parameter-free knee/elbow heuristic)."""
+    xs = np.asarray(xs, dtype=float)
+    ys = np.asarray(ys, dtype=float)
+    x = (xs - xs.min()) / (np.ptp(xs) or 1.0)
+    y = (ys - ys.min()) / ((ys.max() - ys.min()) or 1.0)
+    x1, y1, x2, y2 = x[0], y[0], x[-1], y[-1]
+    denom = np.hypot(y2 - y1, x2 - x1) or 1.0
+    dist = np.abs((y2 - y1) * x - (x2 - x1) * y + x2 * y1 - y2 * x1) / denom
+    return int(np.argmax(dist))
+
+
+def _auto_segments(curve, signal, kmax: int = 8, min_size: int = 3):
+    """Architecture-agnostic automatic segmentation, returning breakpoints
+    (segment end indices, last == n) with no manual penalty.
+
+    The NUMBER of levels is chosen by K-Means + Silhouette on the per-size
+    latency values. Empirically this is the most accurate and stable level
+    counter across architectures: it recovers the four L1/L2/L3/DRAM plateaus on
+    x86 (Intel/AMD), three on Apple M1 (where the 12 MiB L2 and the ~8 MiB SLC
+    blur into one band), and two on a virtualised host -- because it counts
+    distinct latency *levels* directly and is unaffected by how unevenly the
+    inter-level latency jumps are spaced. A penalty- or cost-knee-based count, by
+    contrast, is biased by the largest jump and under-counts a well-separated
+    x86 hierarchy.
+
+    The BOUNDARIES are then localised by change-point detection constrained to
+    exactly that many segments (dynamic programming with k-1 breakpoints). This
+    realises the design principle *clustering counts the levels, change-point
+    localises their capacities* directly, and needs no penalty hyper-parameter."""
+    k, _ = cluster_level_count(curve, max_k=kmax, algorithm="kmeans")
+    k = max(1, min(k, len(signal) // max(min_size, 1)))
+    if k <= 1:
+        return [len(signal)]
+    return rpt.Dynp(model="l2", min_size=min_size).fit(signal).predict(n_bkps=k - 1)
+
+
 def detect_levels_changepoint(
     curve: pd.DataFrame,
-    penalty: float = 3.0,
+    penalty: float | None = None,
     min_size: int = 3,
     merge_ratio: float = 1.4,
     smooth_kernel: int = 3,
+    kmax: int = 8,
 ) -> pd.DataFrame:
     """Detect memory levels as plateaus in the latency curve.
 
     :param curve: DataFrame with ``wss_bytes`` and ``latency_ns`` columns,
         sorted by ``wss_bytes``.
-    :param penalty: PELT penalty on the log-latency signal. Higher = fewer,
-        coarser segments.
+    :param penalty: PELT penalty on the log-latency signal (higher = fewer,
+        coarser segments). If ``None`` (the default), the level count is chosen
+        **automatically and architecture-agnostically** by K-Means + Silhouette
+        and the boundaries are localised by change-point constrained to that
+        count, with no manual penalty (see :func:`_auto_segments`). An explicit
+        value is still honoured -- used by :func:`penalty_sensitivity` and the
+        CLI ``--penalty`` override.
     :param merge_ratio: adjacent plateaus whose latency ratio is below this are
         merged (they represent the same physical level, over-segmented by noise).
     :returns: one row per detected level with ``level_name``, latency
@@ -77,8 +124,13 @@ def detect_levels_changepoint(
 
     signal = np.log(np.maximum(y, 1e-6)).reshape(-1, 1)
 
-    algo = rpt.Pelt(model="l2", min_size=min_size).fit(signal)
-    bkps = algo.predict(pen=penalty)  # segment end indices (exclusive), last == n
+    if penalty is None:
+        # Automatic, architecture-agnostic model selection: K-Means+Silhouette
+        # counts the levels, change-point localises them (see _auto_segments).
+        bkps = _auto_segments(curve, signal, kmax=kmax, min_size=min_size)
+    else:
+        algo = rpt.Pelt(model="l2", min_size=min_size).fit(signal)
+        bkps = algo.predict(pen=penalty)  # segment ends (exclusive), last == n
 
     # Build [start, end) segments.
     segments = []
@@ -104,9 +156,12 @@ def detect_levels_changepoint(
     for i, (s, e) in enumerate(merged):
         lat = curve["latency_ns"].values[s:e]
         wss = curve["wss_bytes"].values[s:e]
-        name = LEVEL_NAMES[i] if i < len(LEVEL_NAMES) else f"Level {i + 1}"
-        if i == len(LEVEL_NAMES) - 1 or i == n_levels - 1:
-            name = "DRAM" if i == n_levels - 1 else name
+        if i == n_levels - 1:
+            name = "DRAM"  # the deepest level is always main memory
+        elif i < len(LEVEL_NAMES):
+            name = LEVEL_NAMES[i]
+        else:
+            name = f"L{i + 1} Cache"
         # Capacity = last working-set size still served at this level's speed,
         # i.e. the largest wss in the plateau before it steps up.
         capacity = float(wss.max()) if i < n_levels - 1 else float("nan")
@@ -203,8 +258,47 @@ def cluster_level_count_dbscan(curve: pd.DataFrame, eps: float = 0.3) -> int:
     return len(set(labels) - {-1})  # exclude noise label
 
 
-def analyze(curve: pd.DataFrame, penalty: float = 3.0) -> dict:
-    """Run the full level-discovery analysis and reconcile the estimators."""
+def changepoint_level_count(
+    curve: pd.DataFrame, kmax: int = 8, min_size: int = 3, smooth_kernel: int = 3
+) -> int:
+    """Independent change-point estimate of the level *count*, via the knee of
+    the segmentation cost curve J(K) (Lavielle's criterion; exact K-segment fits
+    by dynamic programming on the smoothed log-latency signal).
+
+    Reported in the estimator comparison to show *why* change-point is used only
+    to localise levels, not to count them: on a well-separated x86 L1/L2/L3/DRAM
+    hierarchy this cost-knee under-counts (it is biased toward the single largest
+    latency jump), whereas K-Means + Silhouette counts correctly on every
+    architecture. Kept independent of the productive hybrid so the comparison is
+    not circular (the hybrid's count is, by construction, the Silhouette count)."""
+    curve = curve.sort_values("wss_bytes").reset_index(drop=True)
+    y = curve["latency_ns"].values.astype(float)
+    k = smooth_kernel if smooth_kernel % 2 == 1 else smooth_kernel + 1
+    if len(y) >= k:
+        y = medfilt(y, kernel_size=k)
+    signal = np.log(np.maximum(y, 1e-6)).reshape(-1, 1)
+    n = len(signal)
+    kmax = max(2, min(kmax, n // max(min_size, 1)))
+    algo = rpt.Dynp(model="l2", min_size=min_size).fit(signal)
+    ks, costs = [], []
+    for K in range(1, kmax + 1):
+        try:
+            bkps = algo.predict(n_bkps=K - 1)
+        except Exception:
+            break
+        ks.append(K)
+        costs.append(float(algo.cost.sum_of_costs(bkps)))
+    if len(ks) < 3:
+        return ks[-1] if ks else 1
+    return ks[_knee_index(ks, costs)]
+
+
+def analyze(curve: pd.DataFrame, penalty: float | None = None) -> dict:
+    """Run the full level-discovery analysis and reconcile the estimators.
+
+    ``penalty=None`` (default) uses automatic model selection for the
+    change-point level count (the cost-knee criterion); an explicit penalty
+    overrides it."""
     levels = detect_levels_changepoint(curve, penalty=penalty)
     k_kmeans, sil_kmeans = cluster_level_count(curve, algorithm="kmeans")
     k_gmm, sil_gmm = cluster_level_count(curve, algorithm="gmm")

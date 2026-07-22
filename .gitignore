@@ -36,3 +36,11 @@ share/python-wheels/
 
 # macOS
 .DS_Store
+
+# Project-specific: keep saved web pages, scratch binaries, LaTeX build output,
+# and redistributed third-party PDFs out of the repo
+Automated memory hierarchy latency detection - Claude_files/
+*.aux
+*.log
+missfont.log
+timecheck
