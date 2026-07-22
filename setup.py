@@ -32,6 +32,7 @@ setup(
     package_dir={"": "src"},
     ext_modules=[probe_module, wss_probe_module],
     cmdclass={"build_ext": BuildExt},
+    python_requires=">=3.9",
     install_requires=[
         "numpy",
         "pandas",
@@ -41,4 +42,8 @@ setup(
         "scipy",
         "ruptures",
     ],
+    extras_require={
+        # Development / CI tooling: `pip install -e .[dev]`
+        "dev": ["pytest", "ruff", "black"],
+    },
 )

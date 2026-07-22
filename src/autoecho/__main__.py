@@ -3,15 +3,38 @@ import os
 import sys
 
 
+def _positive_int(value):
+    """argparse type: accept only strictly positive integers."""
+    ivalue = int(value)
+    if ivalue <= 0:
+        raise argparse.ArgumentTypeError(f"must be a positive integer, got {value}")
+    return ivalue
+
+
+def _positive_float(value):
+    """argparse type: accept only strictly positive floats."""
+    fvalue = float(value)
+    if fvalue <= 0:
+        raise argparse.ArgumentTypeError(f"must be a positive number, got {value}")
+    return fvalue
+
+
 def run_wss(args):
     """Primary pipeline: working-set-size pointer-chase sweep + change-point
     level discovery + comparative evaluation + validation vs ground truth."""
-    from autoecho.wss import sweep
-    from autoecho.analysis import analyze
-    from autoecho.validation import validate, get_ground_truth
-    from autoecho.evaluation import compare_methods, capacity_accuracy
-    from autoecho.report import (plot_memory_mountain, plot_model_selection,
-                                 generate_wss_report)
+    try:
+        from autoecho.wss import sweep
+        from autoecho.analysis import analyze
+        from autoecho.validation import validate, get_ground_truth, get_machine_label
+        from autoecho.evaluation import compare_methods, capacity_accuracy
+        from autoecho.report import (plot_memory_mountain, plot_model_selection,
+                                     generate_wss_report)
+    except ImportError as e:
+        print(f"\n[setup error] {e}\n", file=sys.stderr)
+        sys.exit(1)
+
+    machine = get_machine_label()
+    print(f"Machine: {machine}")
 
     print(f"\n[1/5] Running {args.runs} pointer-chase sweep(s) up to {args.max_mb} MiB "
           f"({args.repeats} repeats/size, seed={args.seed})...")
@@ -36,8 +59,10 @@ def run_wss(args):
     cap_acc = capacity_accuracy(sweeps, gt, penalty=args.penalty)
     if len(comparison):
         top = comparison.iloc[0]
-        print(f"      most accurate & consistent: {top['method']} "
-              f"(std={top['std_levels']})")
+        # This ranks LEVEL-COUNT stability only. Change-point is the productive
+        # method: it is the sole estimator that localises cache capacities.
+        print(f"      most stable level-count: {top['method']} "
+              f"(std={top['std_levels']}); capacities localised by change-point")
 
     print("[4/5] Validating against hardware ground truth...")
     caps = levels["capacity_bytes"].dropna().tolist()
@@ -58,22 +83,27 @@ def run_wss(args):
         allc.to_csv(os.path.join(args.output_dir, "wss_curves_all.csv"), index=False)
     generate_wss_report(levels, result, val,
                         os.path.join(args.output_dir, "validation_report.md"),
-                        comparison=comparison, capacity_acc=cap_acc)
+                        comparison=comparison, capacity_acc=cap_acc, machine=machine)
     plot_memory_mountain(curve, levels,
                          os.path.join(args.output_dir, "memory_mountain.png"),
-                         sweeps=sweeps)
+                         sweeps=sweeps, machine=machine)
     plot_model_selection(result,
-                         os.path.join(args.output_dir, "model_selection.png"))
+                         os.path.join(args.output_dir, "model_selection.png"),
+                         machine=machine)
     print("\nDone! Auto-Echo WSS pipeline completed successfully.")
 
 
 def run_samples(args):
     """Legacy sample-based pipeline, retained as the documented naive baseline
     (write-before-read guarantees L1 residency -- see dissertation Section 5)."""
-    from autoecho.probe import collect
-    from autoecho.preprocessing import preprocess_pipeline
-    from autoecho.clustering import discover_memory_levels_kmeans, map_clusters_to_levels
-    from autoecho.report import plot_latency_distribution, generate_report
+    try:
+        from autoecho.probe import collect
+        from autoecho.preprocessing import preprocess_pipeline
+        from autoecho.clustering import discover_memory_levels_kmeans, map_clusters_to_levels
+        from autoecho.report import plot_latency_distribution, generate_report
+    except ImportError as e:
+        print(f"\n[setup error] {e}\n", file=sys.stderr)
+        sys.exit(1)
 
     print(f"\n[1/4] Collecting {args.samples} memory latency samples...")
     raw_df = collect(args.samples, args.mode)
@@ -100,14 +130,14 @@ def main():
                         help="wss = pointer-chase sweep (primary); samples = naive baseline")
     parser.add_argument("--output-dir", type=str, default="data")
     # WSS options
-    parser.add_argument("--max-mb", type=int, default=256, help="max working-set size (MiB)")
-    parser.add_argument("--hops", type=int, default=1 << 20, help="min pointer-chase hops per timing window")
-    parser.add_argument("--repeats", type=int, default=5, help="repeats per size (minimum is taken)")
+    parser.add_argument("--max-mb", type=_positive_int, default=256, help="max working-set size (MiB)")
+    parser.add_argument("--hops", type=_positive_int, default=1 << 20, help="min pointer-chase hops per timing window")
+    parser.add_argument("--repeats", type=_positive_int, default=5, help="repeats per size (minimum is taken)")
     parser.add_argument("--seed", type=int, default=42, help="RNG seed for reproducible permutations")
-    parser.add_argument("--penalty", type=float, default=3.0, help="change-point penalty (higher = fewer levels)")
-    parser.add_argument("--runs", type=int, default=1, help="independent sweeps for stability/error-bar evaluation")
+    parser.add_argument("--penalty", type=_positive_float, default=3.0, help="change-point penalty (higher = fewer levels)")
+    parser.add_argument("--runs", type=_positive_int, default=1, help="independent sweeps for stability/error-bar evaluation")
     # Legacy sample options
-    parser.add_argument("--samples", type=int, default=50000)
+    parser.add_argument("--samples", type=_positive_int, default=50000)
     parser.add_argument("--mode", type=int, default=0, choices=[0, 1])
 
     args = parser.parse_args()

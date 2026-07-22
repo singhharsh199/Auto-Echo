@@ -21,7 +21,10 @@ log-spaced sweep (four cache lines up to 256 MiB, ~10 points per octave):
 1. A **page-aligned** buffer (`posix_memalign`/`_aligned_malloc`, as in the
    reference paper) of size `S` is divided into slots one **cache line apart**
    (the line size is auto-detected: 128 B on Apple Silicon, typically 64 B on
-   x86). Page alignment avoids spurious TLB effects in the deep-memory plateaus.
+   x86). Alignment only guarantees a cache line never straddles two pages; it
+   does *not* remove TLB pressure (the number of pages touched scales with `S`
+   regardless), so the deep-memory plateau still includes page-walk latency —
+   noted as a threat to validity.
 2. The slots are linked into a **single random Hamiltonian cycle** using a
    Fisher–Yates shuffle driven by a **seeded xorshift64 RNG** (reproducible).
    Building this cycle writes every slot, which also pre-faults every page.

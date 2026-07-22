@@ -29,5 +29,10 @@ share/python-wheels/
 .installed.cfg
 *.egg
 
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
 # macOS
 .DS_Store

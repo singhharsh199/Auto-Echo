@@ -56,16 +56,21 @@ def compare_methods(
         counts = np.array(counts, dtype=float)
         mean_c = float(counts.mean())
         std_c = float(counts.std())
-        # Correct if the modal count reaches the expected number of levels.
         modal = int(np.round(np.median(counts)))
-        correct = modal >= expected
+        # Correct if the modal count matches the expected number, allowing ONE
+        # extra level for a genuinely undocumented tier (e.g. the M1 SLC that
+        # sysctl does not report). Gross over-segmentation (many spurious knees)
+        # is NOT rewarded -- the previous `modal >= expected` marked a 20-level
+        # prediction as correct.
+        correct = expected <= modal <= expected + 1
         rows.append(
             {
                 "method": method,
                 "mean_levels": round(mean_c, 2),
                 "std_levels": round(std_c, 3),
                 "modal_levels": modal,
-                "expected_min": expected,
+                "expected": expected,
+                "count_error": modal - expected,
                 "count_ok": correct,
             }
         )
@@ -126,7 +131,8 @@ def capacity_accuracy(sweeps: list, ground_truth: dict, penalty: float = 3.0) ->
     for curve in sweeps:
         levels = detect_levels_changepoint(curve, penalty=penalty)
         caps = levels["capacity_bytes"].dropna().tolist()
-        v = validate(caps)
+        # Reuse the caller's ground-truth reading instead of re-querying the OS.
+        v = validate(caps, ground_truth=ground_truth)
         accs.append(v["accuracy"])
         for m in v["matches"]:
             if m["pct_error"] is not None and m["match"]:

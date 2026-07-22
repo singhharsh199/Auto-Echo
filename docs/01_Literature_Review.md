@@ -5,13 +5,13 @@ This project sits at the intersection of two research traditions: (i) empirical
 characterisation of the memory hierarchy from user space through timing
 measurements, and (ii) unsupervised machine learning for automatic structure
 discovery. The immediate inspiration is the ECOOP 2025 paper *"Shouting at
-Memory: Where Did My Write Go?"* (Klimis et al.), but the measurement technique
+Memory: Where Did My Write Go?"* (Klimis), but the measurement technique
 Auto-Echo ultimately adopts belongs to a much older and well-established body of
 work on cache-hierarchy benchmarking. This review situates the project honestly
 within that lineage and states precisely where its novelty lies.
 
-## 2. Memory Echolocation (Klimis et al., ECOOP 2025)
-Klimis et al. introduce *memory echolocation*: emitting a store and timing the
+## 2. Memory Echolocation (Klimis, ECOOP 2025)
+Klimis introduces *memory echolocation*: emitting a store and timing the
 subsequent load, whose latency acts as a signature for where the data currently
 resides. Their headline contribution is not the latency profiling itself but its
 use as an **Oracle inside an active model-learning loop** that infers the
@@ -24,7 +24,7 @@ inherited assumptions from this paper that do not transfer:
 - The **WPQ is a persistent-memory (Optane) construct**, not a general feature of
   the commodity cache hierarchy. Expecting a WPQ tier on an Apple M1 (as the
   first Auto-Echo prototype did) is a category error.
-- Klimis et al. rely on **`clflush` and fine-grained `rdtscp`**, both x86-only.
+- Klimis relies on **`clflush` and fine-grained `rdtscp`**, both x86-only.
   Neither is available in user space on Apple Silicon, so their exact method is
   not portable — motivating a different measurement primitive.
 
@@ -93,7 +93,7 @@ select model complexity automatically. Two families are relevant:
   primary estimator and the clustering indices as independent cross-checks.
 
 ## 6. Summary and Positioning
-Klimis et al. demonstrate that software timing is a valid proxy for hardware
+Klimis demonstrates that software timing is a valid proxy for hardware
 memory state; the classical benchmarking literature (lmbench, Saavedra & Smith,
 Yotov) demonstrates that cache capacities are recoverable from user-space sweep
 curves. Auto-Echo combines the portable, flush-free **pointer-chase WSS probe**

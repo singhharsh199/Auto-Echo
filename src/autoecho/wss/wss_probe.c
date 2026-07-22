@@ -66,7 +66,9 @@ static inline uint64_t get_ticks(void) { return mach_absolute_time(); }
 #else
 static inline uint64_t get_ticks(void) {
     uint64_t v;
-    asm volatile("mrs %0, cntvct_el0" : "=r"(v));
+    // ISB prevents the counter read being speculated across the timed region;
+    // the memory clobber stops the compiler reordering loads across it.
+    asm volatile("isb; mrs %0, cntvct_el0" : "=r"(v) :: "memory");
     return v;
 }
 #endif
@@ -104,12 +106,28 @@ static inline uint64_t xorshift64(uint64_t *state) {
     return x;
 }
 
-static volatile void *g_sink; /* stops the optimiser deleting the chase */
+/* Portable compiler barrier: forbids the compiler from moving the timed loads
+ * across the timer reads (a hardware fence is unnecessary because the pointer
+ * chase is already fully serialised by data dependencies). */
+#if defined(_MSC_VER)
+#define COMPILER_BARRIER() _ReadWriteBarrier()
+#else
+#define COMPILER_BARRIER() __asm__ __volatile__("" ::: "memory")
+#endif
 
-/* Page-aligned allocation (like the reference paper's posix_memalign): aligning
- * the buffer to a page reduces spurious TLB effects, cleaning the deep-memory
- * plateau. 16 KiB covers Apple Silicon's page size and is a multiple of x86's
- * 4 KiB. */
+/* NOTE the placement: `void *volatile` is a *volatile pointer*, so the store
+ * `g_sink = p` below is a required side effect and the compiler must keep the
+ * dependent-load chase that produces p. Writing `volatile void *` instead makes
+ * only the pointee volatile, leaving the store dead -- which lets -O3 (notably
+ * GCC) delete the entire measured loop and report physically impossible ~0 ns. */
+static void *volatile g_sink;
+
+/* Page-aligned allocation (like the reference paper's posix_memalign). Alignment
+ * only guarantees a cache line never straddles two pages; it does NOT reduce TLB
+ * pressure -- the number of distinct pages touched grows with the working-set
+ * size regardless of alignment, so the deep-memory plateau still includes
+ * page-walk latency (see the Threats to Validity discussion). 16 KiB covers
+ * Apple Silicon's page size and is a multiple of x86's 4 KiB. */
 #define AE_ALIGN 16384
 static void *aligned_alloc_portable(size_t size) {
 #if defined(_WIN32)
@@ -217,11 +235,13 @@ static PyObject *measure_wss(PyObject *self, PyObject *args) {
         g_sink = (void *)p;
 
         p = (void **)start;
+        COMPILER_BARRIER();
         uint64_t c0 = get_ticks();
         for (Py_ssize_t h = 0; h < hops; h++) {
             p = (void **)(*p);
         }
         uint64_t c1 = get_ticks();
+        COMPILER_BARRIER();
         g_sink = (void *)p;
 
         double per_access = (double)(c1 - c0) / (double)hops;
