@@ -21,10 +21,15 @@ every access — to motivate the correct design. The final framework couples a
 runtime-calibrated timing** and an **unsupervised change-point inference stage**,
 cross-checked by K-Means, GMM, and DBSCAN clustering, and validated automatically
 against OS-reported ground truth. It builds and runs on Linux, Windows, and
-macOS across x86-64 and ARM64. On an Apple M1, Auto-Echo recovers the L1 (128 KiB) and L2 (12 MiB)
-capacities to within 0.3 octaves and additionally exposes the ~8 MB System-Level
-Cache that the OS does not report — achieving 100% agreement with documented
-hardware. The measurement technique descends from classical benchmarks such as
+macOS across x86-64 and ARM64. On an Apple M1 (the platform validated to date),
+Auto-Echo recovers the L1 (128 KiB) and L2 (12 MiB) capacities to within
+0.3 octaves — both OS-documented caches (2/2) matched within a factor of two —
+and additionally resolves a repeatable intermediate latency regime consistent
+with the ~8 MB System-Level Cache that the OS does not report (a candidate
+attribution requiring further confirmation). Validation
+on Intel and AMD x86 machines, where a documented three-level L1/L2/L3 hierarchy
+and a working `clflush` further exercise the pipeline, is the immediate next step
+and uses the same already-portable code. The measurement technique descends from classical benchmarks such as
 lmbench's `lat_mem_rd`; the contribution is the fully unsupervised,
 self-validating, architecture-agnostic inference layer built on top of it.
 
@@ -41,8 +46,8 @@ map them.
 empirical measurement alone — no privileges, no per-architecture instructions —
 would support performance tuning, portable auto-tuning of cache-blocked
 algorithms, and reproducible systems research on undocumented hardware. This
-direction is not incidental to the reference work: Klimis et al. [1] explicitly
-identify it as an open avenue, noting that "the ability to infer data location in
+direction is not incidental to the reference work: Klimis [1] explicitly
+identifies it as an open avenue, noting that "the ability to infer data location in
 the memory hierarchy via timing could potentially be applied to study cache
 behaviour, coherence protocol actions, or even aspects of memory consistency,
 although these applications would require careful calibration, different
@@ -79,7 +84,7 @@ labels or thresholds, and (iii) validates its output against known hardware.
 ## 3. Literature Review & Background
 The project draws on two traditions (expanded in `docs/01_Literature_Review.md`).
 
-**Memory echolocation.** Klimis et al. [1] time a load following a store to infer
+**Memory echolocation.** Klimis [1] times a load following a store to infer
 where data resides, using it as an Oracle for active learning of NVM persistency
 models. Their method depends on x86-only `clflush`/`rdtscp` and targets an
 Optane-specific Write Pending Queue (WPQ) — neither of which generalises to a
@@ -180,15 +185,21 @@ Elbow-vs-Silhouette model-selection plot.
 ---
 
 ## 5. Baseline and Its Failure (Critical Analysis)
-The initial prototype **faithfully reproduces the reference paper's own
-measurement technique** (Klimis et al. §6.1, the method behind their Figure 7):
+The initial prototype is a **portability-oriented approximation of the reference
+paper's measurement technique** (Klimis §6.1, the method behind their Figure 7):
 each timed load is preceded by a write to the target address and — on x86 — an
-explicit `clflush`, with the load timed by `rdtscp` [1]. On the Intel platform of
-the paper this works. The contribution here is the finding that the *same*
-technique is **x86-bound and collapses on Apple Silicon**: it timed individual
-random reads on a 64 MB buffer and produced only timer-quantised, physically
-meaningless output (latencies clustered at 0, 8, 16, 25 ns — exact multiples of
-the timer tick). Three concrete barriers explain this:
+explicit `clflush`, with the load timed by `rdtscp` [1]. It is an *approximation*,
+not a faithful reproduction: it uses a different buffer size and sample count,
+and on ARM the `clflush` has no equivalent, so the flush step is simply omitted.
+On the Intel platform of the paper the technique works; the contribution here is
+the finding that this **store/flush/timed-load approach is x86-bound and
+collapses on Apple Silicon**. Timing individual random reads on a 64 MB buffer
+produced only timer-quantised output: raw read times were either 0 or 1 timer
+tick (0 or ~41.7 ns), and the window-5 moving-average smoothing then blended
+these into spurious sub-steps at multiples of 41.7/5 ≈ 8.3 ns (≈ 0, 8, 17, 25,
+33 ns) — an artefact of the quantised timer and the smoothing filter, carrying no
+memory-latency information. Three concrete barriers explain the underlying
+failure:
 
 1. **Timer quantisation.** The 41.7 ns tick dwarfs an L1 hit; timing a single
    read measures the timer, not memory.
@@ -204,7 +215,7 @@ latencies from different levels *before* clustering and erodes the very structur
 being sought. These findings — not a coding bug — motivated the WSS redesign and
 are retained as the framework's documented naive baseline (`--method samples`).
 
-**Evaluating the paper's proposed mitigation.** Klimis et al. (§8.1) propose a
+**Evaluating the paper's proposed mitigation.** Klimis (§8.1) propose a
 Local Outlier Factor (LOF) filter to clean ambiguous timings. We evaluated it
 directly on the baseline data (`evaluation.evaluate_lof_mitigation`). LOF flagged
 only ~0.04% of samples as outliers — the quantised data is too degenerate for a
@@ -217,7 +228,25 @@ patch.
 
 ---
 
-## 6. Results & Evaluation (WSS Method, Apple M1)
+## 6. Results & Evaluation
+Auto-Echo runs identically across platforms; results are reported **per machine**
+as they are collected, using the same command
+(`python -m autoecho --method wss --runs 3`). The Apple M1 is fully validated
+below; the x86 (Intel and AMD) machines are pending and their tables are laid out
+ready to be populated once those environments are available.
+
+### 6.1 Test machines
+| Machine | Arch | Core probed | L1d | L2 | L3 | Line | Status |
+| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
+| Apple M1 | ARM64 | Firestorm P-core | 128 KiB | 12 MiB | — (8 MiB SLC) | 128 B | ✅ validated |
+| Intel *(model TBD)* | x86-64 | *TBD* | *TBD* | *TBD* | *TBD* | 64 B | ⏳ to be measured |
+| AMD *(model TBD)* | x86-64 | *TBD* | *TBD* | *TBD* | *TBD* | 64 B | ⏳ to be measured |
+
+*Ground-truth cache sizes are read automatically from the OS at run time
+(`sysctl` / `/sys` / `Win32_CacheMemory`); the Intel and AMD rows will be filled
+from those readings once the sweeps are run.*
+
+### 6.2 Apple M1 (Firestorm P-core) — validated
 The WSS probe produces a clean four-plateau latency curve (Fig. 1). Change-point
 detection and validation against `sysctl` ground truth, over three independent
 sweeps, give:
@@ -231,15 +260,19 @@ sweeps, give:
 | L3 / SLC | 13.9 MiB | 31.80 ns | 18.1–77.4 ns | (unreported) | — |
 | DRAM | — | 131.4 ns | 108.9–140.0 ns | — | — |
 
-**Overall validation accuracy: 100%** (2/2 OS-documented caches matched within a
-factor of two; **mean absolute capacity error 19.6%** over three sweeps). L1
-lands within 23% of the documented 128 KiB. †On the M1 the deep hierarchy is
-genuinely blurred: the performance cores share a 12 MiB L2 *and* an ~8 MiB
+**Both OS-documented caches (2/2) matched within a factor of two** (the matching
+tolerance; see §6.6), with **mean absolute capacity error 19.6%** over three
+sweeps. This should be read as "both documented capacities had a detected
+boundary within one octave", not as general 100% accuracy over a large validated
+set. L1 lands within 23% of the documented 128 KiB. †On the M1 the deep hierarchy
+is genuinely blurred: the performance cores share a 12 MiB L2 *and* an ~8 MiB
 System-Level Cache (SLC), producing two closely spaced knees (~7 MiB and
 ~13.9 MiB). The greedy log-scale matcher aligns the documented 12 MiB L2 with the
-13.9 MiB knee (+16.1% error); the intermediate ~7 MiB plateau corresponds to the
-SLC, a real structure that `sysctl` does not expose [13]. That the empirical
-method surfaces an *undocumented* level is a positive result, not an error.
+13.9 MiB knee (+16.1% error); the intermediate ~7 MiB plateau is *consistent with*
+the SLC, a structure that `sysctl` does not expose [13]. This SLC attribution is a
+**candidate interpretation**: the current experiment cannot uniquely separate the
+regime from shared-L2 contention or TLB effects, and confirming it needs
+performance-counter, per-core-type and cross-core experiments (§6.6).
 
 **Table 2: Model selection — Elbow and Silhouette agree (Fig. 2).**
 
@@ -290,6 +323,92 @@ in the *clustering* counts reflects genuine measurement noise in the 7–14 MB
 contention region, which is precisely why change-point's stability there is
 notable.
 
+### 6.3 Intel x86 — *to be measured*
+Unlike Apple Silicon, a mainstream Intel part exposes a documented **three-level
+L1/L2/L3** hierarchy with 64-byte lines, a fine-grained `rdtscp` counter, and a
+working `clflush`. This platform therefore also serves to (a) confirm the
+runtime-calibration path on the invariant TSC and (b) close the §5 loop by
+showing the naive baseline **does** recover the hierarchy where `clflush` works.
+Results below will be populated from `python -m autoecho --method wss --runs 3`.
+
+**Table 5: Discovered hierarchy vs. ground truth (Intel — placeholder).**
+
+| Level | Detected capacity | Median latency | p5–p95 | Ground truth | Error |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| L1 Cache | *TBD* | *TBD* | *TBD* | *TBD* | *TBD* |
+| L2 Cache | *TBD* | *TBD* | *TBD* | *TBD* | *TBD* |
+| L3 Cache | *TBD* | *TBD* | *TBD* | *TBD* | *TBD* |
+| DRAM | — | *TBD* | *TBD* | — | — |
+
+Validation accuracy: *TBD*; mean absolute capacity error: *TBD*. Estimator
+comparison, penalty sensitivity, and figures (memory mountain, model selection)
+to be inserted from the Intel run.
+
+### 6.4 AMD x86 — *to be measured*
+An AMD (Zen) part likewise exposes L1/L2/L3 with 64-byte lines but a different
+cache organisation (e.g. larger per-CCX L3), providing a second, independent x86
+data point and a further test of architecture-agnosticism.
+
+**Table 6: Discovered hierarchy vs. ground truth (AMD — placeholder).**
+
+| Level | Detected capacity | Median latency | p5–p95 | Ground truth | Error |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| L1 Cache | *TBD* | *TBD* | *TBD* | *TBD* | *TBD* |
+| L2 Cache | *TBD* | *TBD* | *TBD* | *TBD* | *TBD* |
+| L3 Cache | *TBD* | *TBD* | *TBD* | *TBD* | *TBD* |
+| DRAM | — | *TBD* | *TBD* | — | — |
+
+Validation accuracy: *TBD*; mean absolute capacity error: *TBD*.
+
+### 6.5 Cross-platform summary
+Populated as each machine is measured; the M1 column is complete.
+
+| Metric | Apple M1 (ARM64) | Intel x86-64 | AMD x86-64 |
+| :--- | :---: | :---: | :---: |
+| Cache line size | 128 B | *TBD (64 B)* | *TBD (64 B)* |
+| Levels resolved (change-point) | 4 (incl. SLC) | *TBD* | *TBD* |
+| Validation accuracy | 100% (2/2) | *TBD* | *TBD* |
+| Mean abs. capacity error | 19.6% | *TBD* | *TBD* |
+| Naive baseline (with `clflush`) | n/a (no ARM flush) | *TBD* | *TBD* |
+
+A combined cross-machine figure overlaying all three latency curves
+(`compare_curves.py`) — the strongest single piece of evidence for the
+architecture-agnostic claim — will be added once at least the Intel curve exists.
+
+### 6.6 Threats to validity
+Following the structure of the reference paper's own threats section [1]:
+
+- **External validity (generalisation).** Results are from a *single* machine
+  (one Apple M1 performance core). "Cross-platform" and "architecture-agnostic"
+  are therefore claims about the *design* and portable implementation, not yet
+  experimentally demonstrated; the Intel/AMD runs (§6.3–6.5) are required to
+  substantiate them.
+- **Construct validity (what is measured).** The pointer chase measures
+  *load-to-use* latency of a serialised dependent chain, which includes base
+  pipeline cost — so the ~1.54 ns L1 figure is not directly comparable to the
+  paper's `rdtscp`-dominated 10–25 ns. Absolute values are best read as *relative*
+  differences between tiers (as the paper itself argues in §6.2).
+- **Confounding — TLB and page walks.** As the working set grows, the number of
+  distinct pages touched grows with it; deep-plateau latency therefore includes
+  DTLB-miss and page-walk cost, which page alignment does *not* remove. The
+  ~7–14 MB region cannot yet be cleanly separated into cache vs TLB effects; a
+  huge-page control and performance counters are needed.
+- **SLC attribution.** The intermediate ~7 MB regime is *consistent with* the M1
+  SLC but is not uniquely attributable to it without per-core-type, cross-core
+  and counter-based experiments.
+- **Measurement bias.** Latency is the *minimum* over repeats (a lower envelope
+  that hides variability); and although the sweep order is now seed-randomised to
+  decorrelate size from thermal drift, sustained thermal throttling remains a
+  possible bias on long sweeps.
+- **Validation tolerance.** A factor-of-two match is permissive; a 200 KiB
+  detection would still "match" a 128 KiB L1. Ground truth is OS-reported and not
+  fully independent of vendor documentation. Stricter one-to-one matching at
+  multiple tolerances (±10/25/50%) and an external `lmbench` cross-check are
+  planned.
+- **Conclusion validity.** Level-count estimators vary run-to-run in the
+  contention region; only change-point is stable there, which is why it, not the
+  count-stability leader, is treated as the productive method.
+
 ---
 
 ## 7. Discussion & Future Work
@@ -331,15 +450,22 @@ principled alternative: a portable, flush-free working-set-size pointer-chase
 probe with batch-amortised timing, feeding an unsupervised change-point
 inference stage cross-checked by clustering and validated against live OS ground
 truth. On an Apple M1 the framework recovers the L1 and L2 capacities to within
-0.3 octaves, surfaces the OS-unreported System-Level Cache, and attains 100%
-agreement with documented hardware — establishing Auto-Echo as an accurate,
-self-validating, architecture-agnostic tool for automated memory-hierarchy
-discovery from user space.
+0.3 octaves (both documented caches matched within a factor of two) and resolves
+a repeatable intermediate regime consistent with the OS-unreported System-Level
+Cache — a candidate attribution that further experiments must confirm (§6.6).
+Validation on Intel and AMD x86 machines — which expose a documented three-level
+L1/L2/L3 hierarchy and a working `clflush`, and whose result tables (§6.3–6.5)
+are laid out ready to populate — is the remaining step to convert the
+architecture-agnostic claim from *demonstrated on one platform* to *demonstrated
+across architectures*. On the evidence to date, Auto-Echo is best characterised as
+a **portable-design framework with an Apple M1 case study**: an accurate,
+critically evaluated analysis pipeline whose cross-architecture generality is
+designed-in and awaiting empirical confirmation.
 
 ---
 
 ## 9. References
-[1] V. Klimis et al., "Shouting at memory: Where did my write go?" in *Proc. 39th European Conf. on Object-Oriented Programming (ECOOP)*, 2025.  
+[1] V. Klimis, "Shouting at memory: Where did my write go?" in *Proc. 39th European Conf. on Object-Oriented Programming (ECOOP 2025)*, LIPIcs vol. 333, Art. 41, pp. 41:1–41:25, 2025. doi: 10.4230/LIPIcs.ECOOP.2025.41.  
 [2] Apple Inc., "mach_absolute_time — Apple developer documentation," 2024. [Online]. Available: https://developer.apple.com/documentation/kernel/1462446-mach_absolute_time  
 [3] M. M. Breunig, H.-P. Kriegel, R. T. Ng, and J. Sander, "LOF: Identifying density-based local outliers," in *Proc. ACM SIGMOD*, 2000, pp. 93–104.  
 [4] P. J. Rousseeuw, "Silhouettes: A graphical aid to the interpretation and validation of cluster analysis," *J. Comput. Appl. Math.*, vol. 20, pp. 53–65, 1987.  

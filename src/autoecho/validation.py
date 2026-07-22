@@ -9,6 +9,36 @@ import platform
 import subprocess
 
 
+def get_machine_label() -> str:
+    """Human-readable identifier for the machine under test, e.g.
+    'Apple M1 (arm64, Darwin)' or 'Intel(R) Core(TM) i7-... (x86_64, Linux)'.
+    Used to label each generated report so per-machine (M1 / Intel / AMD)
+    results can be told apart and slotted into the dissertation tables."""
+    system = platform.system()
+    arch = platform.machine()
+    brand = ""
+    try:
+        if system == "Darwin":
+            brand = subprocess.check_output(
+                ["sysctl", "-n", "machdep.cpu.brand_string"],
+                stderr=subprocess.DEVNULL, text=True,
+            ).strip()
+        elif system == "Linux":
+            with open("/proc/cpuinfo") as f:
+                for line in f:
+                    if "model name" in line:
+                        brand = line.split(":", 1)[1].strip()
+                        break
+        elif system == "Windows":
+            brand = (subprocess.check_output(
+                ["wmic", "cpu", "get", "name"], stderr=subprocess.DEVNULL, text=True,
+            ).splitlines()[1:] or [""])[0].strip()
+    except Exception:
+        pass
+    brand = brand or platform.processor() or "unknown CPU"
+    return f"{brand} ({arch}, {system})"
+
+
 def _sysctl(name: str):
     try:
         out = subprocess.check_output(["sysctl", "-n", name], stderr=subprocess.DEVNULL)
@@ -99,7 +129,8 @@ def get_ground_truth() -> dict:
     return gt
 
 
-def validate(detected_capacities: list[float], tolerance_octaves: float = 1.0) -> dict:
+def validate(detected_capacities: list, tolerance_octaves: float = 1.0,
+             ground_truth: dict = None) -> dict:
     """Compare detected cache capacities to ground truth.
 
     A detected capacity matches a ground-truth cache if they are within
@@ -107,11 +138,14 @@ def validate(detected_capacities: list[float], tolerance_octaves: float = 1.0) -
     Matching in log-space is the natural metric because cache sizes are powers
     of two and the sweep samples them geometrically.
 
+    :param ground_truth: documented cache sizes; if ``None`` they are read from
+        the OS. Injectable so callers can pass a cached reading (avoiding
+        repeated OS queries) and so tests can supply deterministic values.
     :returns: dict with per-cache match results and an overall accuracy.
     """
     import math
 
-    gt = get_ground_truth()
+    gt = ground_truth if ground_truth is not None else get_ground_truth()
     detected = sorted(float(c) for c in detected_capacities if c == c and c > 0)
 
     results = []

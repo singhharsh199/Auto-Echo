@@ -5,7 +5,8 @@ import numpy as np
 import os
 
 
-def plot_memory_mountain(curve, levels=None, output_path=None, sweeps=None):
+def plot_memory_mountain(curve, levels=None, output_path=None, sweeps=None,
+                         machine=None):
     """Plot the working-set-size latency curve (the 'memory mountain') with
     detected level plateaus shaded and inferred cache capacities marked.
 
@@ -15,6 +16,8 @@ def plot_memory_mountain(curve, levels=None, output_path=None, sweeps=None):
     :param sweeps: optional list of per-run curve DataFrames; if given, a
         min–max variability band across runs is shaded to show measurement
         stability (error bars).
+    :param machine: optional machine label (e.g. 'Apple M1 (arm64, Darwin)');
+        rendered as a subtitle so the figure states which machine it is from.
     """
     sns.set_theme(style="whitegrid")
     fig, ax = plt.subplots(figsize=(11, 6.5))
@@ -57,7 +60,10 @@ def plot_memory_mountain(curve, levels=None, output_path=None, sweeps=None):
     ax.set_xlabel("Working-set size (KiB) [log2]", fontsize=11, fontweight="bold")
     ax.set_ylabel("Average access latency (ns) [log]", fontsize=11, fontweight="bold")
     ax.set_title("Auto-Echo Memory Latency Curve (Pointer-Chase Sweep)",
-                 fontsize=13, fontweight="bold", pad=12)
+                 fontsize=13, fontweight="bold", pad=22 if machine else 12)
+    if machine:
+        ax.text(0.5, 1.012, machine, transform=ax.transAxes, ha="center",
+                va="bottom", fontsize=9.5, style="italic", color="#555555")
     ax.legend(loc="upper left", frameon=True, framealpha=0.9, fontsize=9)
     plt.tight_layout()
 
@@ -70,10 +76,13 @@ def plot_memory_mountain(curve, levels=None, output_path=None, sweeps=None):
     plt.close()
 
 
-def plot_model_selection(analysis, output_path=None):
+def plot_model_selection(analysis, output_path=None, machine=None):
     """Plot the Elbow (K-Means inertia) and Silhouette curves side by side, so
     the automatic model-selection choice is visible and comparable (project
-    definition: Elbow Method AND Silhouette Score, applied and compared)."""
+    definition: Elbow Method AND Silhouette Score, applied and compared).
+
+    :param machine: optional machine label rendered as a subtitle so the figure
+        states which machine it is from."""
     sns.set_theme(style="whitegrid")
     fig, ax1 = plt.subplots(figsize=(8, 5))
     ks = [k for k, _ in analysis["elbow_curve"]]
@@ -84,7 +93,10 @@ def plot_model_selection(analysis, output_path=None):
     ax1.set_xlabel("Number of clusters k", fontsize=11, fontweight="bold")
     ax1.set_ylabel("Within-cluster sum of squares (inertia)", fontsize=10)
     ax1.set_title("Automatic Model Selection: Elbow vs Silhouette",
-                  fontsize=12, fontweight="bold")
+                  fontsize=12, fontweight="bold", pad=22 if machine else 6)
+    if machine:
+        ax1.text(0.5, 1.012, machine, transform=ax1.transAxes, ha="center",
+                 va="bottom", fontsize=9, style="italic", color="#555555")
     ax1.axvline(analysis["n_levels_kmeans"], color="#009E73", linestyle=":",
                 label=f"Silhouette k = {analysis['n_levels_kmeans']}")
     ax1.legend(loc="upper right", fontsize=9)
@@ -99,9 +111,11 @@ def plot_model_selection(analysis, output_path=None):
 
 
 def generate_wss_report(levels, analysis, validation, output_path=None,
-                        comparison=None, capacity_acc=None):
+                        comparison=None, capacity_acc=None, machine=None):
     """Generate the Markdown validation report for the WSS methodology."""
     r = "# Auto-Echo Validation Report\n\n"
+    if machine:
+        r += f"**Machine:** {machine}\n\n"
     r += "## 1. Discovered Memory Hierarchy\n\n"
     r += "| Level | Inferred capacity | Median latency | p5–p95 latency | WSS range | Points |\n"
     r += "|---|---|---|---|---|---|\n"
@@ -134,12 +148,12 @@ def generate_wss_report(levels, analysis, validation, output_path=None,
         r += ("Note: the clustering estimators only *count* levels; change-point "
               "detection additionally *localises* each cache's capacity, so it is "
               "the productive method for hierarchy mapping (see Section 4).\n\n")
-        r += "| Rank | Method | Mean levels | Std (stability) | Modal | Expected ≥ | Count OK |\n"
-        r += "|---|---|---|---|---|---|---|\n"
+        r += "| Rank | Method | Mean levels | Std (stability) | Modal | Expected | Count error | Count OK |\n"
+        r += "|---|---|---|---|---|---|---|---|\n"
         for _, row in comparison.iterrows():
             r += (f"| {row['rank']} | {row['method']} | {row['mean_levels']} | "
-                  f"{row['std_levels']} | {row['modal_levels']} | {row['expected_min']} | "
-                  f"{'✅' if row['count_ok'] else '❌'} |\n")
+                  f"{row['std_levels']} | {row['modal_levels']} | {row['expected']} | "
+                  f"{row['count_error']:+d} | {'✅' if row['count_ok'] else '❌'} |\n")
 
     r += "\n## 4. Validation Against Hardware Ground Truth\n\n"
     r += f"Overall accuracy: **{validation['accuracy']*100:.1f}%** "

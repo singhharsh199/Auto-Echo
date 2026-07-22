@@ -1,0 +1,27 @@
+# Tooling configuration for Auto-Echo. Build metadata still lives in setup.py
+# (it also declares the C extensions); this file configures the formatter,
+# linter, and test runner so style stays uniform across the repository.
+
+[tool.black]
+line-length = 90
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 90
+target-version = "py310"
+extend-exclude = ["Dissertation_Paper_Template - LATEX", "Automated memory hierarchy latency detection - Claude_files"]
+
+[tool.ruff.lint]
+# pycodestyle (E/W), pyflakes (F), isort (I), bugbear (B), pyupgrade (UP).
+select = ["E", "W", "F", "I", "B", "UP"]
+# E501 (line length) is handled by the formatter; C code and the CLI wrapper
+# occasionally exceed it in help strings.
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    "ignore::sklearn.exceptions.ConvergenceWarning",
+    "ignore::UserWarning",
+]

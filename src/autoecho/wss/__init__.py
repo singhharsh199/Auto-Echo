@@ -5,76 +5,56 @@ working-set size. This is the signal from which cache-level capacities are
 inferred (cf. lmbench ``lat_mem_rd``). It replaces the flawed sample-based
 probe, whose write-before-read pattern guaranteed an L1 hit on every access.
 """
-import platform
-import subprocess
+from __future__ import annotations  # allow "int | None" on Python 3.9
 
 import numpy as np
 import pandas as pd
 
-import autoecho.wss_probe_c as wss_probe_c
+# Shared platform helpers (single source of truth). Re-exported so existing
+# imports such as `from autoecho.wss import get_timer_resolution_ns` keep working.
+from autoecho.platform_timing import get_cache_line_size, get_timer_resolution_ns
+
+try:
+    import autoecho.wss_probe_c as wss_probe_c
+except ImportError as _e:  # extension not built, or built for another platform
+    raise ImportError(
+        "Auto-Echo's native probe (autoecho.wss_probe_c) is not available. "
+        "This usually means the C extension has not been compiled for this "
+        "machine. From the project root run:\n\n"
+        "    pip install -e .\n\n"
+        "(requires a C compiler and the Python development headers; on Debian/"
+        "Ubuntu: 'sudo apt-get install build-essential python3-dev', on Windows: "
+        "the MSVC C++ Build Tools). See README.md and docs/06_Setup_Guide.md.\n"
+        f"Original import error: {_e}"
+    ) from _e
 
 
-def get_cache_line_size() -> int:
-    """Detect the hardware cache-line size in bytes (128 on Apple Silicon,
-    64 on x86 Linux/Windows). Falls back to 64."""
-    system = platform.system()
-    try:
-        if system == "Darwin":
-            out = subprocess.check_output(["sysctl", "-n", "hw.cachelinesize"])
-            return int(out.strip())
-        if system == "Linux":
-            with open(
-                "/sys/devices/system/cpu/cpu0/cache/index0/coherency_line_size"
-            ) as f:
-                return int(f.read().strip())
-        # Windows: x86 uses 64-byte lines; the fallback below is correct there.
-    except Exception:
-        pass
-    return 64
-
-
-def get_timer_resolution_ns() -> float:
-    """Nanoseconds per hardware timer tick, used to convert the probe's
-    ticks-per-access into nanoseconds.
-
-    Apple Silicon uses the exact rational from ``mach_timebase_info`` (125/3 on
-    M1). Every other platform (x86 TSC, ARM ``cntvct``, via Windows QPC) is
-    CALIBRATED at runtime against the OS monotonic clock -- this is robust to
-    turbo/frequency scaling, unlike reading a nominal CPU frequency."""
-    system = platform.system()
-    arch = platform.machine()
-
-    if system == "Darwin" and arch == "arm64":
-        try:
-            import ctypes
-            import ctypes.util
-
-            libc = ctypes.CDLL(ctypes.util.find_library("c"))
-
-            class mach_timebase_info_data_t(ctypes.Structure):
-                _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
-
-            info = mach_timebase_info_data_t()
-            libc.mach_timebase_info(ctypes.byref(info))
-            return info.numer / info.denom
-        except Exception:
-            return 125.0 / 3.0
-
-    # x86 TSC and ARM-Linux: calibrate at runtime (correct on all of them).
-    try:
-        return float(wss_probe_c.calibrate())
-    except Exception:
-        return 1.0
+# Number of geometrically-spaced sample points per doubling (octave) of the
+# working-set size. Denser sampling ⇒ sharper localisation of the cache knees.
+SAMPLES_PER_OCTAVE = 10
+# Smallest working set probed, as a multiple of the cache-line size.
+MIN_WORKING_SET_LINES = 4
+# Default largest working set (bytes). 256 MiB comfortably overflows commodity
+# L3/SLC into DRAM; raise for servers with very large last-level caches.
+DEFAULT_MAX_BYTES = 256 * 1024 * 1024
+# Timing-window sizing: hops per window is at least DEFAULT_MIN_HOPS and at least
+# HOPS_PER_SLOT × (slots in the working set), capped at MAX_HOPS so the deepest
+# (slowest) sizes do not blow up total runtime.
+DEFAULT_MIN_HOPS = 1 << 20
+HOPS_PER_SLOT = 8
+MAX_HOPS = 1 << 23
+DEFAULT_REPEATS = 5
+DEFAULT_SEED = 42
 
 
 def default_wss_sizes(line_size: int, max_bytes: int = 256 * 1024 * 1024) -> np.ndarray:
     """Log-spaced working-set sizes from one cache line up to ``max_bytes``.
 
-    ~10 points per octave gives fine resolution around the cache-capacity
-    transitions where the latency curve steps up."""
-    min_bytes = line_size * 4
+    ``SAMPLES_PER_OCTAVE`` points per octave give fine resolution around the
+    cache-capacity transitions where the latency curve steps up."""
+    min_bytes = line_size * MIN_WORKING_SET_LINES
     n_octaves = np.log2(max_bytes / min_bytes)
-    n_points = int(np.ceil(n_octaves * 10)) + 1
+    n_points = int(np.ceil(n_octaves * SAMPLES_PER_OCTAVE)) + 1
     sizes = np.unique(
         (min_bytes * 2.0 ** np.linspace(0, n_octaves, n_points)).astype(np.int64)
     )
@@ -84,10 +64,10 @@ def default_wss_sizes(line_size: int, max_bytes: int = 256 * 1024 * 1024) -> np.
 
 
 def sweep(
-    max_bytes: int = 256 * 1024 * 1024,
-    hops: int = 1 << 20,
-    repeats: int = 5,
-    seed: int = 42,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    hops: int = DEFAULT_MIN_HOPS,
+    repeats: int = DEFAULT_REPEATS,
+    seed: int = DEFAULT_SEED,
     stride: int | None = None,
 ) -> pd.DataFrame:
     """Run the full working-set-size sweep.
@@ -99,18 +79,25 @@ def sweep(
     resolution = get_timer_resolution_ns()
     sizes = default_wss_sizes(line, max_bytes)
 
+    # Measure sizes in a seed-shuffled order so that thermal/DVFS drift over the
+    # multi-minute sweep is decorrelated from the working-set size (otherwise the
+    # deepest, longest-running sizes are always measured last and their latency
+    # is systematically biased). Deterministic given the seed; sorted for output.
+    order = np.random.default_rng(seed).permutation(len(sizes))
+
     rows = []
-    for size in sizes:
+    for idx in order:
+        size = int(sizes[idx])
         # Amortise more for larger sets; cap to bound total runtime.
-        nslots = max(2, int(size) // line)
-        this_hops = int(min(max(hops, nslots * 8), 1 << 23))
-        ticks = wss_probe_c.measure_wss(int(size), int(line), this_hops, repeats, seed)
+        nslots = max(2, size // line)
+        this_hops = int(min(max(hops, nslots * HOPS_PER_SLOT), MAX_HOPS))
+        ticks = wss_probe_c.measure_wss(size, int(line), this_hops, repeats, seed)
         rows.append(
             {
-                "wss_bytes": int(size),
-                "wss_kib": int(size) / 1024.0,
+                "wss_bytes": size,
+                "wss_kib": size / 1024.0,
                 "latency_ns": ticks * resolution,
             }
         )
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows).sort_values("wss_bytes").reset_index(drop=True)
