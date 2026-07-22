@@ -32,7 +32,9 @@ setup(
     package_dir={"": "src"},
     ext_modules=[probe_module, wss_probe_module],
     cmdclass={"build_ext": BuildExt},
-    python_requires=">=3.9",
+    python_requires=">=3.10",
+    # Abstract runtime deps; requirements.txt holds the pinned lockfile (same
+    # packages, exact versions) used for reproducible results.
     install_requires=[
         "numpy",
         "pandas",

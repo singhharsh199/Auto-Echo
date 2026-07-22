@@ -1,48 +1,100 @@
-# Auto-Echo: Initial Architecture & Methodology
-*A guide for your Professor / Viva Defense regarding the Auto-Echo implementation*
+# Auto-Echo: Architecture, Methodology & Design Story
+*A guide for the viva / supervisor discussion of the delivered Auto-Echo system*
 
-This document breaks down the current state of the Auto-Echo project as it stands in this initial version. It explains the core architecture, the methodology used, and the challenges discovered during testing.
-
----
-
-## 1. The Genesis: The Research Problem
-**The Inspiration:** The project was inspired by recent systems-level research into empirical memory discovery, such as the Klimis ECOOP 2025 paper on Memory Echolocation. 
-**The Goal:** The objective was to build a tool that could automatically discover a computer's memory hierarchy purely from user-space, without needing admin privileges or looking up hardware documentation.
-**The Challenge:** Bridging highly precise, low-level systems programming (to measure nanosecond-level access times) with Unsupervised Machine Learning (to classify those raw timings into actual cache levels).
-
-## 2. Building the Foundation: The Architecture
-We built the fundamental pipeline into four distinct stages:
-
-### Stage 1: The Probe (C-Extension)
-*   **Goal:** Collect raw memory access latencies.
-*   **Implementation:** We wrote a native C module (`probe.c`) that allocates an array in memory. It uses a `for` loop to sequentially read through the array and times how long the reads take using `clock_gettime` or `mach_absolute_time`.
-*   **Cache Management:** We attempted to clear the cache between reads using the `clflush` assembly instruction to ensure we were getting fresh data rather than cached data.
-
-### Stage 2: Data Preprocessing (Python)
-*   **Goal:** Clean the noisy systems data before feeding it to the ML.
-*   **Implementation:** We built `preprocessing.py` which applies three filters:
-    1.  **IQR (Interquartile Range) Filtering:** To remove extreme timing spikes caused by the OS scheduling background tasks.
-    2.  **LOF (Local Outlier Factor):** A density-based machine learning algorithm to remove isolated noisy points.
-    3.  **Moving Average:** To smooth the final data curve.
-
-### Stage 3: The Machine Learning Engine
-*   **Goal:** Automatically classify the cleaned latencies into discrete cache levels (e.g., L1, L2, DRAM).
-*   **Implementation:** We integrated the **K-Means clustering** algorithm. The framework dynamically tests multiple values of $K$ (from 2 to 6) and uses the **Silhouette Score** to mathematically determine which $K$ best separates the data points.
-
-### Stage 4: Reporting
-*   **Goal:** Present the findings.
-*   **Implementation:** We created `report.py` to output the discovered clusters into a structured Markdown report (`data/validation_report.md`) and plot a PNG graph of the S-Curve.
+This document explains what Auto-Echo does, how it works, and the design journey —
+including a deliberately **retained negative result** that motivated the final
+design. It reflects the delivered system (the WSS pointer-chase pipeline), not the
+early prototype.
 
 ---
 
-## 3. Current Findings and Limitations (The Reality Check)
-As we tested this initial architecture, we successfully built the end-to-end ML pipeline, but we discovered that the physical hardware on Apple Silicon (M-Series chips) behaves differently than traditional x86 machines, leading to flawed data collection.
+## 1. The research problem
+- **Inspiration:** the Klimis ECOOP 2025 paper *"Shouting at Memory"* (memory
+  echolocation — inferring where data lives from access timing).
+- **Goal:** automatically discover a machine's memory hierarchy **purely from user
+  space** — no admin privileges, no architecture-specific instructions, no
+  hardware documentation.
+- **Challenge:** bridge precise low-level timing (nanosecond cache latency) with
+  unsupervised machine learning that turns raw timings into labelled cache
+  levels — and do it *portably* across architectures.
 
-If your professor asks about the limitations of this current implementation, you can explain:
+## 2. The delivered system — WSS pointer-chase, then "count, then localise"
 
-1. **Architecture Lock-in (`clflush`):** The `clflush` instruction used to manually clear caches is an x86-specific instruction. On ARM architectures like Apple Silicon, it is ignored in user-space, meaning our probe struggles to properly evict data from the cache.
-2. **Hardware Prefetchers:** Because the C-probe reads the array sequentially (index 0, 1, 2...), the modern CPU prefetcher detects the pattern and pre-loads the data into the fast L1 cache before we even ask for it, which artificially hides the slower L2 and L3 latencies.
-3. **Timer Quantization:** The system timer (`mach_absolute_time`) only updates roughly every 8 nanoseconds. Because an L1 cache hit only takes ~2-3ns, timing a single read operation results in heavily quantized numbers (e.g., snapping to 0ns, 8ns, 16ns) rather than a smooth latency curve.
+### Stage 1 — The probe (C extension, `src/autoecho/wss/wss_probe.c`)
+- **Working-set-size (WSS) sweep:** for each buffer size (a few cache lines up to
+  256 MiB, ~10 points/octave), measure the average access latency.
+- **Pointer chasing defeats the prefetcher:** the buffer is linked into a single
+  random Hamiltonian cycle (seeded Fisher–Yates), so each load's address depends
+  on the value returned by the previous load — the prefetcher cannot run ahead.
+- **Batch-amortised timing beats the coarse timer:** ~1,000,000 dependent hops are
+  timed together and divided by the count, recovering sub-nanosecond latency
+  despite Apple's ~42 ns timer tick. No cache flush is needed — a working set
+  larger than a level overflows it by construction.
 
-### Next Steps / Conclusion
-This initial architecture successfully demonstrates the integration of a C-based system probe with a Python unsupervised machine learning pipeline. The data cleaning and Silhouette Score selection function perfectly. Future work would require pivoting the C-probe to a "pointer-chasing" sweep to defeat the hardware prefetchers and timer limits discovered in this stage.
+### Stage 2 — Runtime timer calibration
+Tick→nanosecond conversion is **calibrated at runtime** against the OS monotonic
+clock, so it is correct on any machine and robust to turbo/frequency scaling — an
+improvement over the reference paper's fixed `/proc/cpuinfo` frequency parsing.
+
+### Stage 3 — Level discovery: count, then localise (`src/autoecho/analysis.py`)
+- **Count** the levels with **K-Means + Silhouette** (cross-checked by GMM,
+  DBSCAN, and the Elbow method). Because this counts distinct latency *levels*
+  directly, it is robust across architectures.
+- **Localise** each cache boundary with **change-point detection** constrained to
+  exactly that many segments (dynamic programming; **no manual penalty**).
+- Principle: *clustering counts the levels, change-point localises their
+  capacities.* The level count is chosen from the data, never hard-coded — the
+  same code recovers **4 levels on x86, 3 on the Apple M1** (L2 + SLC blur
+  together), and **2 on a virtual machine**.
+
+### Stage 4 — Self-validation & reporting (`validation.py`, `evaluation.py`, `report.py`)
+- Detected capacities are checked against **live OS ground truth**
+  (`sysctl` / `/sys` / `Win32_CacheMemory`).
+- Every estimator is scored across independent sweeps for **accuracy and
+  stability**, satisfying the requirement to identify the best method.
+- Outputs: a Markdown validation report, a memory-mountain figure, and a
+  model-selection figure.
+
+---
+
+## 3. The retained negative result (why the design looks like this)
+The **first prototype** was a naive port of the reference paper's technique:
+sequential single reads timed individually, with x86 `clflush` to force misses.
+On Apple Silicon it **failed**, for three structural reasons:
+
+1. **`clflush` is x86-only** — no user-space data-cache flush on ARM, so the
+   "forced DRAM" path silently degenerated.
+2. **Hardware prefetcher** — sequential reads are predicted and pre-loaded,
+   hiding L2/L3/DRAM.
+3. **Timer quantisation** — the ~42 ns tick dwarfs an L1 hit (~1.5 ns), so timing
+   a single read measures the timer, not memory.
+
+This prototype is **retained** as the documented `--method samples` baseline
+(dissertation §5; `docs/03_Validation_Report.md`). It is **not** the current
+method — it is the failure that motivated the WSS redesign, and each defect maps
+to a fix above: prefetcher → pointer chasing; timer → batch amortisation;
+flush → WSS overflow.
+
+---
+
+## 4. Results (Apple M1)
+- **Three levels**, agreed by all five estimators: L1 (~158 KiB), a merged L2/SLC
+  mid-band (~13.9 MiB), and DRAM.
+- **100 % (2/2)** of OS-documented caches matched within a factor of two; mean
+  absolute capacity error **~19.9 %**.
+- Cross-platform behaviour is validated *in method* on synthetic Intel/AMD/VM
+  curves; real x86 and Windows hardware runs are the immediate next step.
+
+---
+
+## 5. Likely viva questions
+- **Why pointer chasing?** Data-dependent loads serialise memory access so the
+  prefetcher cannot hide latency.
+- **Why not a fixed threshold/penalty?** It is machine-specific and unstable;
+  automatic model selection (Silhouette) adapts the level count to the hardware.
+- **Why does the M1 show 3 levels, not 4?** The 12 MiB L2 and ~8 MB SLC are too
+  close to separate reliably; the honest, reproducible answer is one merged
+  mid-band, with the finer split reported as a candidate sub-structure.
+- **What is novel versus lmbench?** The measurement lineage is classical; the
+  contribution is the unsupervised, self-validating, architecture-agnostic
+  inference layer built on top of it.

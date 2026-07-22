@@ -134,7 +134,9 @@ def main():
     parser.add_argument("--hops", type=_positive_int, default=1 << 20, help="min pointer-chase hops per timing window")
     parser.add_argument("--repeats", type=_positive_int, default=5, help="repeats per size (minimum is taken)")
     parser.add_argument("--seed", type=int, default=42, help="RNG seed for reproducible permutations")
-    parser.add_argument("--penalty", type=_positive_float, default=3.0, help="change-point penalty (higher = fewer levels)")
+    parser.add_argument("--penalty", type=_positive_float, default=None,
+                        help="change-point penalty override (higher = fewer levels); "
+                             "omit for automatic model selection (cost-knee)")
     parser.add_argument("--runs", type=_positive_int, default=1, help="independent sweeps for stability/error-bar evaluation")
     # Legacy sample options
     parser.add_argument("--samples", type=_positive_int, default=50000)

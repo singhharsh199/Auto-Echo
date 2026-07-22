@@ -128,7 +128,7 @@ def generate_wss_report(levels, analysis, validation, output_path=None,
 
     r += "\n## 2. Level-Count Agreement Across Estimators\n\n"
     r += "| Estimator | Levels detected |\n|---|---|\n"
-    r += f"| Change-point (PELT) | {analysis['n_levels_changepoint']} |\n"
+    r += f"| Change-point (auto) | {analysis['n_levels_changepoint']} |\n"
     r += f"| K-Means + Silhouette | {analysis['n_levels_kmeans']} (score {analysis['silhouette_kmeans']:.3f}) |\n"
     r += f"| K-Means + Elbow | {analysis['n_levels_elbow']} |\n"
     r += f"| GMM + Silhouette | {analysis['n_levels_gmm']} (score {analysis['silhouette_gmm']:.3f}) |\n"
@@ -145,9 +145,10 @@ def generate_wss_report(levels, analysis, validation, output_path=None,
         r += "\n## 3. Level-Count Estimator Comparison (Agreement & Stability)\n\n"
         r += "Ranked over " + (f"{capacity_acc['n_sweeps']} independent sweeps" if capacity_acc else "the sweep")
         r += " by count correctness then stability (lower std = more consistent). "
-        r += ("Note: the clustering estimators only *count* levels; change-point "
-              "detection additionally *localises* each cache's capacity, so it is "
-              "the productive method for hierarchy mapping (see Section 4).\n\n")
+        r += ("Note: this ranks the level *counters*. The framework's productive "
+              "pipeline uses the most accurate and stable counter — K-Means + "
+              "Silhouette — to choose the number of levels, and change-point to "
+              "*localise* each cache's capacity (see Section 4).\n\n")
         r += "| Rank | Method | Mean levels | Std (stability) | Modal | Expected | Count error | Count OK |\n"
         r += "|---|---|---|---|---|---|---|---|\n"
         for _, row in comparison.iterrows():
