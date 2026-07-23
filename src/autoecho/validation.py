@@ -9,13 +9,43 @@ import platform
 import subprocess
 
 
+def _normalize_arch(arch: str) -> str:
+    """Map the OS-reported machine token to a vendor-neutral ISA name.
+
+    64-bit Windows (and Python's ``platform.machine()``) reports x86-64 as
+    ``AMD64`` -- the name of the instruction set AMD designed -- even on Intel
+    parts, which misreads as a CPU *vendor*. Normalise it (and the various
+    aliases) to ``x86-64`` so an Intel run is not labelled 'AMD64'."""
+    a = (arch or "").lower()
+    if a in ("amd64", "x86_64", "x64", "em64t"):
+        return "x86-64"
+    if a in ("aarch64", "arm64"):
+        return "arm64"
+    return arch or "unknown"
+
+
+def _clean_brand(brand: str) -> str:
+    """Strip trademark noise and collapse whitespace so a brand string reads as
+    e.g. 'Intel Core i5-13450HX' rather than 'Intel(R) Core(TM)  i5-13450HX'."""
+    import re
+
+    brand = re.sub(r"\((?:R|TM|tm|r)\)", "", brand or "")
+    return re.sub(r"\s+", " ", brand).strip()
+
+
 def get_machine_label() -> str:
     """Human-readable identifier for the machine under test, e.g.
-    'Apple M1 (arm64, Darwin)' or 'Intel(R) Core(TM) i7-... (x86_64, Linux)'.
-    Used to label each generated report so per-machine (M1 / Intel / AMD)
-    results can be told apart and slotted into the dissertation tables."""
+    'Apple M1 (arm64, Darwin)' or 'Intel Core i5-13450HX (x86-64, Windows)'.
+    Used to label each generated report so per-machine (M1 / Intel / M5)
+    results can be told apart and slotted into the dissertation tables.
+
+    The architecture token is normalised (``AMD64`` -> ``x86-64``) so an Intel
+    run on Windows is not mislabelled with AMD's ISA name; the brand string is
+    read via PowerShell CIM on Windows (``wmic`` is deprecated/removed on recent
+    Windows 11 and silently fell back to the raw ``Intel64 Family 6 Model ...``
+    processor string)."""
     system = platform.system()
-    arch = platform.machine()
+    arch = _normalize_arch(platform.machine())
     brand = ""
     try:
         if system == "Darwin":
@@ -30,12 +60,18 @@ def get_machine_label() -> str:
                         brand = line.split(":", 1)[1].strip()
                         break
         elif system == "Windows":
-            brand = (subprocess.check_output(
-                ["wmic", "cpu", "get", "name"], stderr=subprocess.DEVNULL, text=True,
-            ).splitlines()[1:] or [""])[0].strip()
+            # PowerShell CIM query for the marketing name (e.g. 'Intel(R)
+            # Core(TM) i5-13450HX'); robust where the legacy `wmic` is absent.
+            out = subprocess.check_output(
+                ["powershell", "-NoProfile", "-Command",
+                 "(Get-CimInstance Win32_Processor).Name"],
+                stderr=subprocess.DEVNULL, text=True,
+            )
+            lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+            brand = lines[0] if lines else ""
     except Exception:
         pass
-    brand = brand or platform.processor() or "unknown CPU"
+    brand = _clean_brand(brand) or _clean_brand(platform.processor()) or "unknown CPU"
     return f"{brand} ({arch}, {system})"
 
 
@@ -138,32 +174,57 @@ def validate(detected_capacities: list, tolerance_octaves: float = 1.0,
     Matching in log-space is the natural metric because cache sizes are powers
     of two and the sweep samples them geometrically.
 
+    Detected knees are assigned to documented caches by **optimal one-to-one
+    (Hungarian) assignment** minimising total log2 error, not greedy
+    nearest-first: greedy can undercount when two adjacent caches both fall
+    within tolerance of the detected knees. Both **recall** (documented caches
+    found) *and* **precision** (detected knees that are real caches) are reported
+    -- a discovery tool must be judged on false positives too, since a spurious
+    knee (e.g. a TLB-transition artefact) within an octave of a real cache would
+    otherwise be silently credited as a hit.
+
     :param ground_truth: documented cache sizes; if ``None`` they are read from
         the OS. Injectable so callers can pass a cached reading (avoiding
         repeated OS queries) and so tests can supply deterministic values.
-    :returns: dict with per-cache match results and an overall accuracy.
+    :returns: dict with per-cache match results, ``recall``/``precision``/``f1``,
+        and ``accuracy`` (retained as an alias of recall for backward compat).
     """
     import math
 
+    import numpy as np
+    from scipy.optimize import linear_sum_assignment
+
     gt = ground_truth if ground_truth is not None else get_ground_truth()
     detected = sorted(float(c) for c in detected_capacities if c == c and c > 0)
+    gt_items = sorted(gt.items(), key=lambda kv: kv[1])
+    n_gt, n_det = len(gt_items), len(detected)
+
+    # Optimal assignment over the log2-error matrix; infeasible (out-of-tolerance)
+    # pairs are given a prohibitive cost and rejected afterwards, so the match
+    # count is the maximum achievable within tolerance.
+    match_for_gt = [None] * n_gt
+    used = [False] * n_det
+    matched = 0
+    INFEASIBLE = 1e9
+    if n_gt and n_det:
+        cost = np.full((n_gt, n_det), INFEASIBLE)
+        for i, (_, gt_size) in enumerate(gt_items):
+            for j, d in enumerate(detected):
+                err = abs(math.log2(d / gt_size))
+                if err <= tolerance_octaves:
+                    cost[i, j] = err
+        rows, cols = linear_sum_assignment(cost)
+        for i, j in zip(rows, cols):
+            if cost[i, j] < INFEASIBLE:
+                match_for_gt[i] = int(j)
+                used[j] = True
+                matched += 1
 
     results = []
-    used = [False] * len(detected)
-    matched = 0
-    for name, gt_size in sorted(gt.items(), key=lambda kv: kv[1]):
-        best_j, best_err = None, None
-        for j, d in enumerate(detected):
-            if used[j]:
-                continue
-            err = abs(math.log2(d / gt_size))
-            if best_err is None or err < best_err:
-                best_err, best_j = err, j
-        ok = best_j is not None and best_err <= tolerance_octaves
-        if ok:
-            used[best_j] = True
-            matched += 1
-        det_bytes = detected[best_j] if best_j is not None else None
+    for i, (name, gt_size) in enumerate(gt_items):
+        j = match_for_gt[i]
+        det_bytes = detected[j] if j is not None else None
+        err_oct = abs(math.log2(det_bytes / gt_size)) if det_bytes is not None else None
         pct_err = (
             100.0 * (det_bytes - gt_size) / gt_size if det_bytes is not None else None
         )
@@ -172,18 +233,29 @@ def validate(detected_capacities: list, tolerance_octaves: float = 1.0,
                 "cache": name,
                 "ground_truth_bytes": gt_size,
                 "detected_bytes": det_bytes,
-                "error_octaves": best_err,
+                "error_octaves": err_oct,
                 "pct_error": pct_err,
-                "match": ok,
+                "match": j is not None,
             }
         )
 
-    accuracy = matched / len(gt) if gt else 0.0
+    # Recall = documented caches found; precision = detected knees that ARE real
+    # caches (the rest -- e.g. TLB-transition artefacts -- are false positives).
+    n_false_positive = sum(1 for u in used if not u)
+    recall = matched / n_gt if n_gt else 0.0
+    precision = matched / n_det if n_det else 0.0
+    f1 = (2 * precision * recall / (precision + recall)
+          if (precision + recall) > 0 else 0.0)
     return {
         "ground_truth": gt,
         "detected_capacities": detected,
         "matches": results,
-        "n_ground_truth": len(gt),
+        "n_ground_truth": n_gt,
         "n_matched": matched,
-        "accuracy": accuracy,
+        "n_detected": n_det,
+        "n_false_positive": n_false_positive,
+        "accuracy": recall,  # alias of recall, retained for backward compatibility
+        "recall": recall,
+        "precision": precision,
+        "f1": f1,
     }

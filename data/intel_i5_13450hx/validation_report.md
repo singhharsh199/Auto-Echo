@@ -1,6 +1,6 @@
 # Auto-Echo Validation Report
 
-**Machine:** Intel64 Family 6 Model 183 Stepping 1, GenuineIntel (AMD64, Windows)
+**Machine:** Intel Core i5-13450HX (x86-64, Windows)
 
 ## 1. Discovered Memory Hierarchy
 

@@ -74,6 +74,7 @@ static PyObject* collect_latencies(PyObject* self, PyObject* args) {
     size_t array_size = 1024 * 1024 * 64; // 64 MB array
     volatile uint8_t *array = (volatile uint8_t *)malloc(array_size);
     if (!array) {
+        Py_DECREF(latencies_list);
         PyErr_NoMemory();
         return NULL;
     }

@@ -39,6 +39,12 @@ warnings.filterwarnings("ignore")
 # hierarchy). Cache levels beyond this list get a generic "Ln Cache" name.
 LEVEL_NAMES = ["L1 Cache", "L2 Cache", "L3 Cache", "L4 Cache", "L5 Cache"]
 
+# Single search ceiling for the number of levels, shared by every model-selection
+# routine (K-Means/GMM silhouette, elbow, change-point cost-knee, and the
+# productive hybrid) so the count that drives discovery and the counts reported
+# for cross-check search the same k range.
+DEFAULT_MAX_K = 8
+
 
 def _human_bytes(n: float) -> str:
     for unit in ["B", "KiB", "MiB", "GiB"]:
@@ -62,7 +68,7 @@ def _knee_index(xs, ys) -> int:
     return int(np.argmax(dist))
 
 
-def _auto_segments(curve, signal, kmax: int = 8, min_size: int = 3):
+def _auto_segments(curve, signal, kmax: int = DEFAULT_MAX_K, min_size: int = 3):
     """Architecture-agnostic automatic segmentation, returning breakpoints
     (segment end indices, last == n) with no manual penalty.
 
@@ -93,7 +99,7 @@ def detect_levels_changepoint(
     min_size: int = 3,
     merge_ratio: float = 1.4,
     smooth_kernel: int = 3,
-    kmax: int = 8,
+    kmax: int = DEFAULT_MAX_K,
 ) -> pd.DataFrame:
     """Detect memory levels as plateaus in the latency curve.
 
@@ -182,7 +188,7 @@ def detect_levels_changepoint(
 
 
 def cluster_level_count(
-    curve: pd.DataFrame, max_k: int = 6, algorithm: str = "kmeans"
+    curve: pd.DataFrame, max_k: int = DEFAULT_MAX_K, algorithm: str = "kmeans"
 ) -> tuple[int, float]:
     """Independent estimate of the number of levels by clustering the per-size
     latency values. Returns ``(best_k, best_silhouette)``.
@@ -208,7 +214,7 @@ def cluster_level_count(
     return best_k, best_score
 
 
-def elbow_method(curve: pd.DataFrame, max_k: int = 6) -> tuple:
+def elbow_method(curve: pd.DataFrame, max_k: int = DEFAULT_MAX_K) -> tuple:
     """Estimate the number of levels by the Elbow Method on K-Means inertia
     (within-cluster sum of squares) over log-latency.
 
@@ -259,7 +265,8 @@ def cluster_level_count_dbscan(curve: pd.DataFrame, eps: float = 0.3) -> int:
 
 
 def changepoint_level_count(
-    curve: pd.DataFrame, kmax: int = 8, min_size: int = 3, smooth_kernel: int = 3
+    curve: pd.DataFrame, kmax: int = DEFAULT_MAX_K, min_size: int = 3,
+    smooth_kernel: int = 3,
 ) -> int:
     """Independent change-point estimate of the level *count*, via the knee of
     the segmentation cost curve J(K) (Lavielle's criterion; exact K-segment fits
@@ -293,21 +300,47 @@ def changepoint_level_count(
     return ks[_knee_index(ks, costs)]
 
 
+def silhouette_curve(curve: pd.DataFrame, max_k: int = DEFAULT_MAX_K) -> list:
+    """Silhouette score at each candidate k, over log-latency. Returned so the
+    model-selection figure can plot the actual Silhouette curve (and the k it
+    peaks at) rather than only marking the chosen k with a line."""
+    X = np.log(np.maximum(curve["latency_ns"].values, 1e-6)).reshape(-1, 1)
+    n = len(X)
+    out = []
+    for k in range(2, min(max_k, n - 1) + 1):
+        labels = KMeans(n_clusters=k, random_state=42, n_init=10).fit_predict(X)
+        if len(set(labels)) < 2:
+            continue
+        out.append((k, float(silhouette_score(X, labels, random_state=42))))
+    return out
+
+
 def analyze(curve: pd.DataFrame, penalty: float | None = None) -> dict:
     """Run the full level-discovery analysis and reconcile the estimators.
 
-    ``penalty=None`` (default) uses automatic model selection for the
-    change-point level count (the cost-knee criterion); an explicit penalty
-    overrides it."""
+    ``penalty=None`` (default) selects the *number* of levels by K-Means +
+    Silhouette and localises their boundaries by change-point (the productive
+    hybrid; see :func:`detect_levels_changepoint`). An explicit penalty overrides
+    this with PELT at that penalty. The estimator cross-check additionally reports
+    an **independent** change-point count via the cost-knee criterion
+    (:func:`changepoint_level_count`), which is *not* seeded by the Silhouette k,
+    so the agreement it shows is genuine rather than circular."""
     levels = detect_levels_changepoint(curve, penalty=penalty)
     k_kmeans, sil_kmeans = cluster_level_count(curve, algorithm="kmeans")
     k_gmm, sil_gmm = cluster_level_count(curve, algorithm="gmm")
     k_dbscan = cluster_level_count_dbscan(curve)
     k_elbow, elbow_curve = elbow_method(curve)
+    k_cp_independent = changepoint_level_count(curve)
 
     return {
         "levels": levels,
-        "n_levels_changepoint": len(levels),
+        # The productive hybrid's level count (Silhouette-counted, change-point
+        # localised) -- this is the number of levels actually discovered.
+        "n_levels_hybrid": len(levels),
+        "n_levels_changepoint": len(levels),  # kept as alias for compatibility
+        # Independent change-point count (cost-knee); NOT the hybrid's Silhouette
+        # count, so it is a genuine cross-check in the report's estimator table.
+        "n_levels_changepoint_independent": k_cp_independent,
         "n_levels_kmeans": k_kmeans,
         "silhouette_kmeans": sil_kmeans,
         "n_levels_gmm": k_gmm,
@@ -315,5 +348,6 @@ def analyze(curve: pd.DataFrame, penalty: float | None = None) -> dict:
         "n_levels_dbscan": k_dbscan,
         "n_levels_elbow": k_elbow,
         "elbow_curve": elbow_curve,
+        "silhouette_curve": silhouette_curve(curve),
         "penalty_sensitivity": penalty_sensitivity(curve),
     }

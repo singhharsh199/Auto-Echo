@@ -68,7 +68,7 @@ def plot_memory_mountain(curve, levels=None, output_path=None, sweeps=None,
     plt.tight_layout()
 
     if output_path:
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         plt.savefig(output_path, dpi=300, bbox_inches="tight")
         print(f"Plot saved to {output_path}")
     else:
@@ -77,9 +77,11 @@ def plot_memory_mountain(curve, levels=None, output_path=None, sweeps=None,
 
 
 def plot_model_selection(analysis, output_path=None, machine=None):
-    """Plot the Elbow (K-Means inertia) and Silhouette curves side by side, so
-    the automatic model-selection choice is visible and comparable (project
-    definition: Elbow Method AND Silhouette Score, applied and compared).
+    """Plot the Elbow (K-Means inertia) and the Silhouette-score curves together,
+    so both automatic model-selection criteria are actually shown and comparable
+    (project definition: Elbow Method AND Silhouette Score, applied and compared).
+    The Silhouette *curve* is drawn on a twin axis -- not merely marked with a
+    vertical line at its peak.
 
     :param machine: optional machine label rendered as a subtitle so the figure
         states which machine it is from."""
@@ -87,22 +89,35 @@ def plot_model_selection(analysis, output_path=None, machine=None):
     fig, ax1 = plt.subplots(figsize=(8, 5))
     ks = [k for k, _ in analysis["elbow_curve"]]
     inertias = [v for _, v in analysis["elbow_curve"]]
-    ax1.plot(ks, inertias, "-o", color="#1f4e79", label="K-Means inertia (Elbow)")
-    ax1.axvline(analysis["n_levels_elbow"], color="#b00020", linestyle="--",
-                label=f"Elbow k = {analysis['n_levels_elbow']}")
+    l1, = ax1.plot(ks, inertias, "-o", color="#1f4e79",
+                   label="K-Means inertia (Elbow)")
     ax1.set_xlabel("Number of clusters k", fontsize=11, fontweight="bold")
-    ax1.set_ylabel("Within-cluster sum of squares (inertia)", fontsize=10)
+    ax1.set_ylabel("Within-cluster sum of squares (inertia)", fontsize=10,
+                   color="#1f4e79")
     ax1.set_title("Automatic Model Selection: Elbow vs Silhouette",
                   fontsize=12, fontweight="bold", pad=22 if machine else 6)
     if machine:
         ax1.text(0.5, 1.012, machine, transform=ax1.transAxes, ha="center",
                  va="bottom", fontsize=9, style="italic", color="#555555")
-    ax1.axvline(analysis["n_levels_kmeans"], color="#009E73", linestyle=":",
-                label=f"Silhouette k = {analysis['n_levels_kmeans']}")
-    ax1.legend(loc="upper right", fontsize=9)
+    handles = [l1]
+    # Silhouette score at each k on a twin y-axis (higher = better separation).
+    sil = analysis.get("silhouette_curve") or []
+    if sil:
+        ax2 = ax1.twinx()
+        l2, = ax2.plot([k for k, _ in sil], [s for _, s in sil], "-s",
+                       color="#009E73", label="Silhouette score")
+        ax2.set_ylabel("Silhouette score", fontsize=10, color="#009E73")
+        ax2.grid(False)
+        handles.append(l2)
+    handles.append(ax1.axvline(analysis["n_levels_elbow"], color="#b00020",
+                   linestyle="--", label=f"Elbow k = {analysis['n_levels_elbow']}"))
+    handles.append(ax1.axvline(analysis["n_levels_kmeans"], color="#009E73",
+                   linestyle=":",
+                   label=f"Silhouette k = {analysis['n_levels_kmeans']}"))
+    ax1.legend(handles=handles, loc="upper right", fontsize=9)
     plt.tight_layout()
     if output_path:
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         plt.savefig(output_path, dpi=300, bbox_inches="tight")
         print(f"Plot saved to {output_path}")
     else:
@@ -127,8 +142,15 @@ def generate_wss_report(levels, analysis, validation, output_path=None,
               f"{row['n_points']} |\n")
 
     r += "\n## 2. Level-Count Agreement Across Estimators\n\n"
-    r += "| Estimator | Levels detected |\n|---|---|\n"
-    r += f"| Change-point (auto) | {analysis['n_levels_changepoint']} |\n"
+    n_hybrid = analysis.get("n_levels_hybrid", analysis["n_levels_changepoint"])
+    r += (f"The productive hybrid discovered **{n_hybrid} levels** (count chosen by "
+          "K-Means + Silhouette, boundaries localised by change-point). The "
+          "estimators below are *independent* cross-checks of that count — the "
+          "change-point row uses the cost-knee criterion, which is **not** seeded "
+          "by the Silhouette k, so its agreement is genuine rather than "
+          "circular.\n\n")
+    r += "| Estimator (independent) | Levels detected |\n|---|---|\n"
+    r += f"| Change-point (cost-knee) | {analysis.get('n_levels_changepoint_independent', '—')} |\n"
     r += f"| K-Means + Silhouette | {analysis['n_levels_kmeans']} (score {analysis['silhouette_kmeans']:.3f}) |\n"
     r += f"| K-Means + Elbow | {analysis['n_levels_elbow']} |\n"
     r += f"| GMM + Silhouette | {analysis['n_levels_gmm']} (score {analysis['silhouette_gmm']:.3f}) |\n"
@@ -149,16 +171,28 @@ def generate_wss_report(levels, analysis, validation, output_path=None,
               "pipeline uses the most accurate and stable counter — K-Means + "
               "Silhouette — to choose the number of levels, and change-point to "
               "*localise* each cache's capacity (see Section 4).\n\n")
-        r += "| Rank | Method | Mean levels | Std (stability) | Modal | Expected | Count error | Count OK |\n"
-        r += "|---|---|---|---|---|---|---|---|\n"
+        r += ("| Rank | Method | Mean levels | Std | Agreement | Modal | Expected "
+              "| Count error | Count OK |\n")
+        r += "|---|---|---|---|---|---|---|---|---|\n"
         for _, row in comparison.iterrows():
+            agree = row.get("modal_agreement", "—")
             r += (f"| {row['rank']} | {row['method']} | {row['mean_levels']} | "
-                  f"{row['std_levels']} | {row['modal_levels']} | {row['expected']} | "
-                  f"{row['count_error']:+d} | {'✅' if row['count_ok'] else '❌'} |\n")
+                  f"{row['std_levels']} | {agree} | {row['modal_levels']} | "
+                  f"{row['expected']} | {row['count_error']:+d} | "
+                  f"{'✅' if row['count_ok'] else '❌'} |\n")
 
     r += "\n## 4. Validation Against Hardware Ground Truth\n\n"
-    r += f"Overall accuracy: **{validation['accuracy']*100:.1f}%** "
-    r += f"({validation['n_matched']}/{validation['n_ground_truth']} documented caches matched within a factor of 2).\n"
+    recall = validation.get("recall", validation["accuracy"])
+    r += (f"**Recall:** {recall*100:.1f}% "
+          f"({validation['n_matched']}/{validation['n_ground_truth']} documented "
+          "caches found within a factor of 2). ")
+    if "precision" in validation:
+        r += (f"**Precision:** {validation['precision']*100:.1f}% "
+              f"({validation['n_matched']}/{validation.get('n_detected', validation['n_matched'])} "
+              f"detected knees are documented caches; "
+              f"{validation.get('n_false_positive', 0)} false positive(s), e.g. "
+              f"TLB-transition artefacts). **F1:** {validation.get('f1', 0.0):.2f}.")
+    r += "\n"
     if capacity_acc and capacity_acc.get("mean_abs_pct_error") is not None:
         r += (f"\nMean absolute capacity error (matched caches, "
               f"{capacity_acc['n_sweeps']} sweeps): "
@@ -173,7 +207,7 @@ def generate_wss_report(levels, analysis, validation, output_path=None,
               f"{err} | {pct} | {'✅' if m['match'] else '❌'} |\n")
 
     if output_path:
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(r)
         print(f"Report saved to {output_path}")
@@ -263,7 +297,7 @@ def plot_latency_distribution(df: pd.DataFrame, cluster_stats: pd.DataFrame = No
     plt.tight_layout()
     
     if output_path:
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         print(f"Plot saved to {output_path}")
     else:
@@ -289,7 +323,7 @@ def generate_report(cluster_stats: pd.DataFrame, output_path: str = None):
         report += f"| **{level_name}** | {min_ns} - {max_ns} ns | {mean_ns:.2f} ns | {count} |\n"
         
     if output_path:
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         with open(output_path, 'w', encoding="utf-8") as f:
             f.write(report)
         print(f"Report saved to {output_path}")

@@ -8,11 +8,11 @@ build-backend = "setuptools.build_meta"
 
 [tool.black]
 line-length = 90
-target-version = ["py310"]
+target-version = ["py311"]
 
 [tool.ruff]
 line-length = 90
-target-version = "py310"
+target-version = "py311"
 extend-exclude = ["Dissertation_Paper_Template - LATEX", "Automated memory hierarchy latency detection - Claude_files"]
 
 [tool.ruff.lint]

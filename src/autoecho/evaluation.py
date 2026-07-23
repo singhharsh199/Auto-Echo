@@ -8,6 +8,8 @@ estimator is scored on:
 and, for change-point detection, the mean percentage error of the localised
 cache capacities against hardware ground truth.
 """
+from collections import Counter
+
 import numpy as np
 import pandas as pd
 
@@ -38,12 +40,15 @@ def _counts_for_sweep(curve: pd.DataFrame, penalty: float = None) -> dict:
 
 
 def compare_methods(
-    sweeps: list, ground_truth: dict, penalty: float = 3.0
+    sweeps: list, ground_truth: dict, penalty: float = None
 ) -> pd.DataFrame:
     """Rank the estimators over one or more sweeps.
 
     :param sweeps: list of curve DataFrames (repeat runs for a stability signal).
     :param ground_truth: dict of documented cache sizes (from validation).
+    :param penalty: retained for signature compatibility; the change-point entry
+        uses the independent cost-knee counter regardless (see
+        :func:`_counts_for_sweep`). Defaults to ``None`` to match the shipped CLI.
     :returns: DataFrame ranked best-first by (accuracy, stability).
     """
     # Expected visible plateaus = documented caches + 1 for DRAM. This is a lower
@@ -58,10 +63,16 @@ def compare_methods(
 
     rows = []
     for method, counts in per_method.items():
-        counts = np.array(counts, dtype=float)
-        mean_c = float(counts.mean())
-        std_c = float(counts.std())
-        modal = int(np.round(np.median(counts)))
+        int_counts = [int(c) for c in counts]
+        arr = np.array(int_counts, dtype=float)
+        mean_c = float(arr.mean())
+        std_c = float(arr.std())
+        # The genuine MODE (most frequent count), not the rounded median -- the
+        # median of e.g. [3, 5] is 4, a count that occurred in neither sweep.
+        modal = int(Counter(int_counts).most_common(1)[0][0])
+        # Quantified stability: fraction of sweeps whose count equals the mode
+        # (1.0 = unanimous). This makes "unstable (2-5)" a number, not a phrase.
+        agreement = round(sum(c == modal for c in int_counts) / len(int_counts), 3)
         # Correct if the modal count matches the expected number, allowing ONE
         # extra level for a genuinely undocumented tier (e.g. the M1 SLC that
         # sysctl does not report). Gross over-segmentation (many spurious knees)
@@ -74,6 +85,7 @@ def compare_methods(
                 "mean_levels": round(mean_c, 2),
                 "std_levels": round(std_c, 3),
                 "modal_levels": modal,
+                "modal_agreement": agreement,
                 "expected": expected,
                 "count_error": modal - expected,
                 "count_ok": correct,
@@ -81,10 +93,12 @@ def compare_methods(
         )
 
     df = pd.DataFrame(rows)
-    # Rank: correct count first, then most stable (low std), then closest to expected.
+    # Rank: correct count first, then most stable (high agreement, low std), then
+    # closest to expected.
     df["_dist"] = (df["modal_levels"] - expected).abs()
     df = df.sort_values(
-        by=["count_ok", "std_levels", "_dist"], ascending=[False, True, True]
+        by=["count_ok", "modal_agreement", "std_levels", "_dist"],
+        ascending=[False, False, True, True],
     ).drop(columns="_dist").reset_index(drop=True)
     df.insert(0, "rank", df.index + 1)
     return df
@@ -127,10 +141,14 @@ def evaluate_lof_mitigation(penalty: float = 3.0) -> dict:
     }
 
 
-def capacity_accuracy(sweeps: list, ground_truth: dict, penalty: float = 3.0) -> dict:
+def capacity_accuracy(sweeps: list, ground_truth: dict, penalty: float = None) -> dict:
     """Mean absolute percentage error of change-point cache capacities vs ground
     truth, averaged over sweeps (change-point is the only estimator that
-    localises capacities, not just counts)."""
+    localises capacities, not just counts).
+
+    ``penalty`` defaults to ``None`` so this exercises the **same** productive
+    hybrid path the CLI ships (Silhouette count + change-point localisation); an
+    explicit value uses PELT at that penalty instead."""
     errs = []
     accs = []
     for curve in sweeps:

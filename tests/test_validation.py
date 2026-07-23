@@ -40,6 +40,37 @@ def test_validate_empty_ground_truth_is_zero_accuracy():
     assert result["n_ground_truth"] == 0
 
 
+def test_validate_reports_precision_and_false_positives():
+    # One real cache + one spurious deep knee (e.g. a TLB artefact) that matches
+    # no ground-truth cache: recall stays 100% but precision must drop and the
+    # false positive must be counted (recall-only accuracy would hide it).
+    gt = {"L1": 32 * 1024}
+    result = validate([32 * 1024, 5 * 1024 * 1024], ground_truth=gt)
+    assert result["recall"] == 1.0
+    assert result["n_detected"] == 2
+    assert result["n_false_positive"] == 1
+    assert abs(result["precision"] - 0.5) < 1e-9
+
+
+def test_validate_optimal_matching_beats_greedy():
+    # GT L2=2 MiB, L3=6 MiB; knees at 1.1 MiB and 3.0 MiB. Greedy nearest-first
+    # would pair L2->3.0 MiB and strand L3; optimal assignment matches BOTH.
+    gt = {"L2": 2 * 1024 * 1024, "L3": 6 * 1024 * 1024}
+    result = validate([1.1 * 1024 * 1024, 3.0 * 1024 * 1024], ground_truth=gt,
+                      tolerance_octaves=1.0)
+    assert result["n_matched"] == 2
+    assert result["recall"] == 1.0
+
+
 def test_machine_label_is_nonempty_string():
     label = get_machine_label()
     assert isinstance(label, str) and len(label) > 0
+
+
+def test_machine_label_normalises_amd64_to_x86_64():
+    # 'AMD64' (Windows' x86-64 ISA token) must never leak into a label as a
+    # vendor; it is normalised to 'x86-64'.
+    from autoecho.validation import _clean_brand, _normalize_arch
+    assert _normalize_arch("AMD64") == "x86-64"
+    assert _normalize_arch("x86_64") == "x86-64"
+    assert _clean_brand("Intel(R) Core(TM)  i5-13450HX") == "Intel Core i5-13450HX"

@@ -47,7 +47,7 @@ DEFAULT_REPEATS = 5
 DEFAULT_SEED = 42
 
 
-def default_wss_sizes(line_size: int, max_bytes: int = 256 * 1024 * 1024) -> np.ndarray:
+def default_wss_sizes(line_size: int, max_bytes: int = DEFAULT_MAX_BYTES) -> np.ndarray:
     """Log-spaced working-set sizes from one cache line up to ``max_bytes``.
 
     ``SAMPLES_PER_OCTAVE`` points per octave give fine resolution around the

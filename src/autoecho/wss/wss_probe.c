@@ -192,6 +192,13 @@ static PyObject *measure_wss(PyObject *self, PyObject *args) {
         PyErr_SetString(PyExc_ValueError, "invalid probe parameters");
         return NULL;
     }
+    /* Each slot must hold the pointer written into it during chase linking;
+     * a sub-pointer stride would overflow the last slot's 8-byte store. */
+    if (stride < (Py_ssize_t)sizeof(void *)) {
+        PyErr_SetString(PyExc_ValueError,
+                        "stride must be >= sizeof(void*) (pointer chase)");
+        return NULL;
+    }
 
     pin_and_boost();
 

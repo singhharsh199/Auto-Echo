@@ -29,8 +29,8 @@ Living checklist of what's left to do. Updated 2026-07-22.
 - [ ] Commit the deletions once done.
 
 ## High (needs hardware / author)
-- [ ] Run on real **x86 (Intel + AMD)** and **Windows** → fill the 17 `TBD` cells
-      in §6.3/6.4/6.5; then add the combined cross-machine figure.
+- [ ] Run on the **Apple M5** (ARM64) → fill the `TBD` cells in §6.4/6.5; then
+      add the combined cross-machine figure. (Intel x86/Windows now done.)
 - [ ] **GenAI accountability statement** — complete, sign, add to an appendix (author).
 - [ ] **Reflective essay** — write (author).
 

@@ -25,7 +25,20 @@ def test_compare_methods_ranks_and_flags_correctness(three_level_curve):
     ranked = compare_methods([three_level_curve, three_level_curve], gt)
     assert not ranked.empty
     assert list(ranked["rank"]) == list(range(1, len(ranked) + 1))
-    assert {"method", "mean_levels", "std_levels", "count_ok"}.issubset(ranked.columns)
+    # 'modal_agreement' quantifies count stability (1.0 == unanimous across sweeps).
+    assert {"method", "mean_levels", "std_levels", "modal_agreement",
+            "count_ok"}.issubset(ranked.columns)
+    assert (ranked["modal_agreement"] == 1.0).all()  # identical sweeps -> unanimous
+
+
+def test_capacity_accuracy_default_uses_production_penalty_none(three_level_curve):
+    # The default must exercise the SAME hybrid path the CLI ships (penalty=None),
+    # not PELT@3.0, so the test guards the headline capacity localisation.
+    gt = {"L1": 32 * 1024, "L2": 256 * 1024}
+    auto = capacity_accuracy([three_level_curve], gt)              # penalty=None
+    pelt = capacity_accuracy([three_level_curve], gt, penalty=3.0)  # legacy path
+    assert 0.0 <= auto["mean_accuracy"] <= 1.0
+    assert auto["n_sweeps"] == 1 and pelt["n_sweeps"] == 1
 
 
 def test_capacity_accuracy_reports_error_and_uses_injected_gt(three_level_curve):

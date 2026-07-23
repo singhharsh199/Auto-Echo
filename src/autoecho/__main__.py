@@ -67,11 +67,14 @@ def run_wss(args):
     print("[4/5] Validating against hardware ground truth...")
     caps = levels["capacity_bytes"].dropna().tolist()
     val = validate(caps)
-    print(f"      accuracy: {val['accuracy']*100:.1f}% "
-          f"({val['n_matched']}/{val['n_ground_truth']} caches matched); "
-          f"mean |error| {cap_acc['mean_abs_pct_error']:.1f}%"
-          if cap_acc.get('mean_abs_pct_error') is not None
-          else f"      accuracy: {val['accuracy']*100:.1f}%")
+    rec = val.get("recall", val["accuracy"]) * 100
+    prec = val.get("precision", 0.0) * 100
+    msg = (f"      recall {rec:.1f}% ({val['n_matched']}/{val['n_ground_truth']} "
+           f"caches found), precision {prec:.1f}% "
+           f"({val.get('n_false_positive', 0)} false positive(s))")
+    if cap_acc.get("mean_abs_pct_error") is not None:
+        msg += f"; mean |capacity error| {cap_acc['mean_abs_pct_error']:.1f}%"
+    print(msg)
 
     print("[5/5] Writing report and plots...")
     os.makedirs(args.output_dir, exist_ok=True)
@@ -136,7 +139,8 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="RNG seed for reproducible permutations")
     parser.add_argument("--penalty", type=_positive_float, default=None,
                         help="change-point penalty override (higher = fewer levels); "
-                             "omit for automatic model selection (cost-knee)")
+                             "omit for automatic model selection (K-Means+Silhouette "
+                             "count, change-point localisation)")
     parser.add_argument("--runs", type=_positive_int, default=1, help="independent sweeps for stability/error-bar evaluation")
     # Legacy sample options
     parser.add_argument("--samples", type=_positive_int, default=50000)

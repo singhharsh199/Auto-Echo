@@ -41,8 +41,9 @@ package (which lives under `src/`) on the import path — do not skip it.
 | macOS | Xcode Command Line Tools (`xcode-select --install`) |
 | Windows | "Desktop development with C++" (MSVC Build Tools) |
 
-Python **3.10+** is required. Dependencies (numpy, pandas, scikit-learn, scipy,
-matplotlib, seaborn, ruptures) install automatically with the command above.
+Python **3.11+** is required (the pinned scientific stack — numpy 2.4, pandas 3.0,
+scipy 1.17, scikit-learn 1.9, matplotlib 3.11 — needs ≥ 3.11). Dependencies install
+automatically with the command above.
 
 ---
 

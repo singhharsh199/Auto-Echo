@@ -32,7 +32,9 @@ setup(
     package_dir={"": "src"},
     ext_modules=[probe_module, wss_probe_module],
     cmdclass={"build_ext": BuildExt},
-    python_requires=">=3.10",
+    # 3.11 floor: the pinned scientific stack (numpy 2.4, pandas 3.0, scipy 1.17,
+    # scikit-learn 1.9, matplotlib 3.11) all require Python >= 3.11.
+    python_requires=">=3.11",
     # Abstract runtime deps; requirements.txt holds the pinned lockfile (same
     # packages, exact versions) used for reproducible results.
     install_requires=[

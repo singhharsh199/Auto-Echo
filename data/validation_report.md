@@ -12,9 +12,11 @@
 
 ## 2. Level-Count Agreement Across Estimators
 
-| Estimator | Levels detected |
+The productive hybrid discovered **3 levels** (count chosen by K-Means + Silhouette, boundaries localised by change-point). The estimators below are *independent* cross-checks of that count — the change-point row uses the cost-knee criterion, which is **not** seeded by the Silhouette k, so its agreement is genuine rather than circular.
+
+| Estimator (independent) | Levels detected |
 |---|---|
-| Change-point (auto) | 3 |
+| Change-point (cost-knee) | 3 |
 | K-Means + Silhouette | 3 (score 0.894) |
 | K-Means + Elbow | 3 |
 | GMM + Silhouette | 3 (score 0.783) |
@@ -30,17 +32,17 @@
 
 Ranked over 3 independent sweeps by count correctness then stability (lower std = more consistent). Note: this ranks the level *counters*. The framework's productive pipeline uses the most accurate and stable counter — K-Means + Silhouette — to choose the number of levels, and change-point to *localise* each cache's capacity (see Section 4).
 
-| Rank | Method | Mean levels | Std (stability) | Modal | Expected | Count error | Count OK |
-|---|---|---|---|---|---|---|---|
-| 1 | Change-point (cost-knee) | 3.0 | 0.0 | 3 | 3 | +0 | ✅ |
-| 2 | K-Means + Silhouette | 3.0 | 0.0 | 3 | 3 | +0 | ✅ |
-| 3 | K-Means + Elbow | 3.0 | 0.0 | 3 | 3 | +0 | ✅ |
-| 4 | DBSCAN | 3.33 | 0.471 | 3 | 3 | +0 | ✅ |
-| 5 | GMM + Silhouette | 3.67 | 0.943 | 3 | 3 | +0 | ✅ |
+| Rank | Method | Mean levels | Std | Agreement | Modal | Expected | Count error | Count OK |
+|---|---|---|---|---|---|---|---|---|
+| 1 | Change-point (cost-knee) | 3.0 | 0.0 | 1.0 | 3 | 3 | +0 | ✅ |
+| 2 | K-Means + Silhouette | 3.0 | 0.0 | 1.0 | 3 | 3 | +0 | ✅ |
+| 3 | K-Means + Elbow | 3.0 | 0.0 | 1.0 | 3 | 3 | +0 | ✅ |
+| 4 | DBSCAN | 3.33 | 0.471 | 0.667 | 3 | 3 | +0 | ✅ |
+| 5 | GMM + Silhouette | 3.67 | 0.943 | 0.667 | 3 | 3 | +0 | ✅ |
 
 ## 4. Validation Against Hardware Ground Truth
 
-Overall accuracy: **100.0%** (2/2 documented caches matched within a factor of 2).
+**Recall:** 100.0% (2/2 documented caches found within a factor of 2). **Precision:** 100.0% (2/2 detected knees are documented caches; 0 false positive(s), e.g. TLB-transition artefacts). **F1:** 1.00.
 
 Mean absolute capacity error (matched caches, 3 sweeps): **19.9%**.
 

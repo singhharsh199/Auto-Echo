@@ -268,14 +268,14 @@ Auto-Echo runs identically across platforms; results are reported **per machine*
 as they are collected, using the same command
 (`python -m autoecho --method wss --runs 3`). Two real machines are now measured —
 the **Apple M1** (§6.2) and an **Intel Core i5-13450HX** (§6.3), spanning both
-ARM64 and x86-64; an AMD part (§6.4) remains outstanding.
+ARM64 and x86-64; an Apple M5 part (§6.4) remains outstanding.
 
 ### 6.1 Test machines
 | Machine | Arch | Core probed | L1d | L2 | L3 | Line | Status |
 | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
 | Apple M1 | ARM64 | Firestorm P-core | 128 KiB | 12 MiB | — (8 MiB SLC) | 128 B | validated |
 | Intel Core i5-13450HX | x86-64 | Raptor Lake P-core | 48 KiB | 1.25 MiB/core | 20 MiB (shared) | 64 B | measured (L1/L2; L3 masked by TLB) |
-| AMD *(model TBD)* | x86-64 | *TBD* | *TBD* | *TBD* | *TBD* | 64 B | to be measured |
+| Apple M5 | ARM64 | *TBD* | *TBD* | *TBD* | *TBD* | *TBD* | to be measured |
 
 *Ground-truth cache sizes are read automatically from the OS at run time
 (`sysctl` / `/sys` / `Win32_CacheMemory`). On Windows, `Win32_CacheMemory` reports
@@ -303,6 +303,24 @@ sweeps. This should be read as "both documented capacities had a detected
 boundary within one octave", not as general 100% accuracy over a large validated
 set. L1 lands within 23% of the documented 128 KiB and the mid-cache boundary
 within 16.1% of the documented 12 MiB L2.
+
+The +23% over-estimation is *systematic and directional*, not noise, and is
+characteristic of random-access latency curves. Because the pointer chase visits
+the working set in a random Hamiltonian order, a set moderately larger than the
+cache still enjoys high residency (≈ 128/157 ≈ 80% of a 157 KiB set stays resident
+in a 128 KiB cache), so the *average* latency rises only gently past the nominal
+capacity — a **soft knee** rather than a sharp step. Minimum-over-repeats and light
+median smoothing further favour the fast tail, so the detected plateau extends a
+few grid points beyond the true capacity and the reported boundary sits
+consistently *above* nominal. The bias is therefore intrinsic and one-signed
+(upward), which is why every detected cache here over-estimates rather than
+scatters — and why the honest claim is "a detected boundary within one octave",
+not a tight percentage. Reducing it would require an **onset** estimator (the first
+departure from the plateau median) rather than the plateau edge — a
+robustness-for-accuracy trade-off left as future work (§6.6). Note that the naive
+alternative of the last-fit/first-miss **midpoint** moves the estimate the *wrong*
+way (+23% → +27%), precisely because the plateau edge already lies above the
+nominal capacity; this was tested and rejected.
 
 †**On the SLC.** The M1 performance cores share a 12 MiB L2 *and* an ~8 MiB
 System-Level Cache (SLC) whose capacities are so close that the automatic method
@@ -475,12 +493,12 @@ TLB/page-walk latency dominates and the curve saturates at ~143 ns before the
 20 MiB L3 can appear, so the third shaded band is a TLB-transition region rather
 than the L3 cache.*
 
-### 6.4 AMD x86 — *to be measured*
-An AMD (Zen) part likewise exposes L1/L2/L3 with 64-byte lines but a different
-cache organisation (e.g. larger per-CCX L3), providing a second, independent x86
-data point and a further test of architecture-agnosticism.
+### 6.4 Apple M5 (ARM64) — *to be measured*
+An Apple M5 part is a newer Apple-silicon generation; running Auto-Echo on it
+would add a second, independent ARM64 data point across CPU generations and a
+further test of architecture-agnosticism, complementing the M1 (§6.2).
 
-**Table 8: Discovered hierarchy vs. ground truth (AMD — placeholder).**
+**Table 8: Discovered hierarchy vs. ground truth (Apple M5 — placeholder).**
 
 | Level | Detected capacity | Median latency | p5–p95 | Ground truth | Error |
 | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -519,9 +537,9 @@ x86 profile, three on an M1-shaped profile, two on a flattened VM profile. These
 are modelled curves, not measurements; the real Intel result (§6.3) exhibits TLB
 effects the synthetic x86 profile omits and should be read in preference to it.*
 
-| Metric | Apple M1 (ARM64) | Intel i5-13450HX (x86-64) | AMD x86-64 |
+| Metric | Apple M1 (ARM64) | Intel i5-13450HX (x86-64) | Apple M5 (ARM64) |
 | :--- | :---: | :---: | :---: |
-| Cache line size | 128 B | 64 B | *TBD (64 B)* |
+| Cache line size | 128 B | 64 B | *TBD (128 B)* |
 | Levels resolved (automatic) | 3 (L1 / L2+SLC / DRAM) | L1 + L2 (stable); L3 masked by TLB | *TBD* |
 | Caches matched (per-core ground truth) | 2/2 documented | 2/3 (L1, L2) | *TBD* |
 | Count stability across 3 sweeps | unanimous, std 0 | unstable (2–5) | *TBD* |
@@ -530,7 +548,40 @@ effects the synthetic x86 profile omits and should be read in preference to it.*
 With two real curves now in hand (M1 and Intel), a combined cross-machine overlay
 (`compare_curves.py`) plotting the M1's 128 KiB / 12 MiB knees against the Intel
 core's 48 KiB / 1.25 MiB knees on one log–log axis is the natural next figure; the
-AMD curve would complete it.
+Apple M5 curve would complete it.
+
+**Capacity-estimator comparison.** The systematic +23% edge bias (§6.2) prompted
+evaluating two alternatives to the default *plateau-edge* estimator (capacity =
+the largest working-set size still served at plateau latency): the transition
+*midpoint* (geometric mean of the last-fit and first-miss sizes) and an *onset*
+estimator (the last size still on the plateau floor before latency departs by
+10%). Absolute error against per-core ground truth:
+
+| Level (per-core GT) | Edge (default) | Midpoint | Onset |
+| :--- | :---: | :---: | :---: |
+| Apple M1 — L1 (128 KiB) | +23.0% | +27.4% | **+0.0%** |
+| Apple M1 — L2+SLC (12 MiB) | +16.1% | +20.2% | −74.7% |
+| Intel — L1 (48 KiB) | +16.0% | +20.1% | −98.3% |
+| Intel — L2 (1.25 MiB) | −1.5% | +2.0% | −75.4% |
+
+The result is a clear **accuracy-versus-robustness trade-off**. The onset estimator
+is *exact* on the M1 L1 (+0.0%, recovering the nominal 128 KiB) — which confirms
+that the +23% is a genuine soft-knee artefact and that the physical knee onset does
+sit at the documented capacity — but it is **catastrophically unstable elsewhere**
+(−57% to −98%). A floor-departure threshold is meaningful only on a *flat* plateau
+with a *sharp* knee, so it collapses on the M1's continuously-sloping merged L2+SLC
+band and on the Intel plateaus, where early-plateau noise trips it almost
+immediately; no threshold, smoothing kernel, or sustained-departure rule rescues a
+sloping plateau. The midpoint is strictly worse than the edge on every level. The
+**plateau-edge estimator is therefore retained as the default**: its bias is
+consistent (+16–23%), one-signed (upward), and never catastrophic, which for an
+automatic, threshold-free tool is worth more than an estimator that is occasionally
+exact and usually wrong. This also fixes the honest reading of the headline
+accuracy — Auto-Echo reliably places a *detected boundary within one octave* of
+each documented cache, with a characterised upward bias, rather than recovering the
+nominal capacity to a tight percentage. A **flat-plateau-gated hybrid** (onset only
+where the plateau slope is near-zero, edge otherwise) is the one plausible route to
+combining the two and is noted as future work (§7).
 
 ### 6.6 Threats to validity
 Following the structure of the reference paper's own threats section [1]:
@@ -540,7 +591,7 @@ Following the structure of the reference paper's own threats section [1]:
   demonstrates architecture-agnostic recovery of the **inner** hierarchy (L1, L2)
   across ARM64 and x86-64. Generality of the *deep* hierarchy and of the level
   *count* is not established: the Intel L3 is masked by TLB effects and its count
-  is unstable (§6.3), and an AMD data point is still outstanding.
+  is unstable (§6.3), and an Apple M5 data point is still outstanding.
 - **Construct validity (what is measured).** The pointer chase measures
   *load-to-use* latency of a serialised dependent chain, which includes base
   pipeline cost — so the ~1.53 ns L1 figure is not directly comparable to the
@@ -562,11 +613,21 @@ Following the structure of the reference paper's own threats section [1]:
   that hides variability); and although the sweep order is now seed-randomised to
   decorrelate size from thermal drift, sustained thermal throttling remains a
   possible bias on long sweeps.
-- **Validation tolerance.** A factor-of-two match is permissive; a 200 KiB
-  detection would still "match" a 128 KiB L1. Ground truth is OS-reported and not
-  fully independent of vendor documentation. Stricter one-to-one matching at
-  multiple tolerances (±10/25/50%) and an external `lmbench` cross-check are
-  planned.
+- **Validation metric — precision as well as recall.** Detected knees are
+  assigned to documented caches by *optimal* one-to-one (Hungarian) matching
+  rather than greedy nearest-first (which can undercount when adjacent caches
+  fall within tolerance), and the framework reports **precision** (the fraction
+  of detected knees that are real caches) alongside **recall** (the fraction of
+  documented caches found). This directly penalises false-positive levels: on the
+  Intel part the 3.5 MiB knee is a TLB-transition artefact, so precision is
+  **2/3 (67%)** even though the L1 and L2 knees are correct — a distinction a
+  recall-only "accuracy" conceals, and precisely the failure mode a *discovery*
+  tool must expose. A factor-of-two match remains permissive (a 200 KiB detection
+  would still match a 128 KiB L1) and ground truth is OS-reported; multiple
+  tolerances (±10/25/50%) and an external `lmbench` cross-check are the remaining
+  planned checks. An **onset**-based capacity estimator (§6.2) — first departure
+  from the plateau median rather than the plateau edge — could reduce the
+  systematic *upward* bias in the reported capacities, at some cost in robustness.
 - **Ground truth on Windows.** The Windows `Win32_CacheMemory` path reports
   *per-socket aggregate* cache sizes, not the per-core sizes the single-core probe
   measures, so the automatic accuracy metric is invalid on Windows (it reads 0 %
@@ -594,11 +655,12 @@ discovery on Apple Silicon. Remaining directions:
   result from "L1/L2 recovered" to a full L1/L2/L3/DRAM map. This is now the single
   most valuable next experiment. (The runtime-calibration path on the invariant TSC
   is already confirmed on real x86 — 0.383 ns/tick on the i5-13450HX.)
-- **AMD x86 and per-core Windows ground truth.** An AMD (Zen) part would add a
-  second, differently-organised x86 data point; alongside it, `validation.py`'s
-  Windows path should read *per-core* caches (`GetLogicalProcessorInformationEx`)
-  instead of the `Win32_CacheMemory` per-socket aggregate, so the automatic
-  accuracy metric is valid on Windows (§6.3, §6.6).
+- **A third machine (Apple M5) and per-core Windows ground truth.** An Apple M5
+  part would add a second, independent ARM64 data point across Apple-silicon
+  generations; separately, `validation.py`'s Windows path should read *per-core*
+  caches (`GetLogicalProcessorInformationEx`) instead of the `Win32_CacheMemory`
+  per-socket aggregate, so the automatic accuracy metric is valid on Windows
+  (§6.3, §6.6).
 - **Cross-machine comparison figure.** A helper (`compare_curves.py`) overlays
   the per-machine latency curves (`wss_curve.csv`) on a single log–log axis with
   each machine's detected cache boundaries annotated. Comparing the M1's
@@ -640,7 +702,7 @@ x86, where 4 KiB-page TLB/page-walk latency masks the 20 MiB L3 and destabilises
 the automatic level count. Auto-Echo is therefore best characterised as a
 **portable framework validated on two ISAs for the inner cache hierarchy**: L1 and
 L2 are recovered on both ARM64 and x86-64, while resolving the deep hierarchy on
-x86 (via a huge-page control) and adding an AMD data point are the clearly-scoped
+x86 (via a huge-page control) and adding an Apple M5 data point are the clearly-scoped
 remaining steps. The honest negative — a masked L3 and an unstable count on x86 —
 is itself a finding, delimiting exactly where a user-space, single-core,
 small-page pointer chase can and cannot map a memory hierarchy.
