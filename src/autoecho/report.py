@@ -174,7 +174,7 @@ def generate_wss_report(levels, analysis, validation, output_path=None,
 
     if output_path:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        with open(output_path, "w") as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             f.write(r)
         print(f"Report saved to {output_path}")
     else:
@@ -290,7 +290,7 @@ def generate_report(cluster_stats: pd.DataFrame, output_path: str = None):
         
     if output_path:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        with open(output_path, 'w') as f:
+        with open(output_path, 'w', encoding="utf-8") as f:
             f.write(report)
         print(f"Report saved to {output_path}")
     else:

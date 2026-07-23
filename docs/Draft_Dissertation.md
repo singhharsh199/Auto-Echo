@@ -29,9 +29,12 @@ capacities to within 0.3 octaves (both OS-documented caches, 2/2, matched within
 a factor of two). Because the 12 MiB L2 and the OS-unreported ~8 MB System-Level
 Cache are so close, they resolve as one band; the finer split into a distinct L2
 and SLC appears only under a forced finer resolution and is reported as a
-candidate sub-structure. Validation on Intel and AMD x86 machines, where a
-documented three-level L1/L2/L3 hierarchy and a working `clflush` further exercise
-the pipeline, is the immediate next step and uses the same already-portable code. The measurement technique descends from classical benchmarks such as
+candidate sub-structure. A second real machine — an Intel Core i5-13450HX
+(Raptor Lake) on Windows/x86-64 — corroborates the design: the same code path
+recovers its per-core L1 (~48 KiB) and L2 (~1.25 MiB), direct cross-architecture
+evidence. It also exposes an honest limit — with 4 KiB pages, TLB/page-walk
+latency masks the 20 MiB L3 and destabilises the automatic level count on x86 —
+motivating a huge-page control as the next step. The measurement technique descends from classical benchmarks such as
 lmbench's `lat_mem_rd`; the contribution is the fully unsupervised,
 self-validating, architecture-agnostic inference layer built on top of it.
 
@@ -83,8 +86,9 @@ labels or thresholds, and (iii) validates its output against known hardware.
    and change-point detection *localises* each capacity — an architecture-agnostic
    design that removes the last manual tuning knob.
 4. A self-validating evaluation against live OS ground truth, with empirical
-   results on Apple M1 (three levels, on which all estimators agree), where the
-   OS-unreported SLC is resolvable as a finer candidate sub-structure.
+   results on **two real ISAs** — an Apple M1 (three levels, unanimous across
+   estimators) and an Intel Raptor Lake core (L1/L2 recovered on x86; the L3 shown
+   to be masked by TLB effects and the count destabilised — a demonstrated limit).
 5. A documented negative result (the naive probe) that motivates the design.
 
 ---
@@ -262,20 +266,21 @@ patch.
 ## 6. Results & Evaluation
 Auto-Echo runs identically across platforms; results are reported **per machine**
 as they are collected, using the same command
-(`python -m autoecho --method wss --runs 3`). The Apple M1 is fully validated
-below; the x86 (Intel and AMD) machines are pending and their tables are laid out
-ready to be populated once those environments are available.
+(`python -m autoecho --method wss --runs 3`). Two real machines are now measured —
+the **Apple M1** (§6.2) and an **Intel Core i5-13450HX** (§6.3), spanning both
+ARM64 and x86-64; an AMD part (§6.4) remains outstanding.
 
 ### 6.1 Test machines
 | Machine | Arch | Core probed | L1d | L2 | L3 | Line | Status |
 | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
 | Apple M1 | ARM64 | Firestorm P-core | 128 KiB | 12 MiB | — (8 MiB SLC) | 128 B | validated |
-| Intel *(model TBD)* | x86-64 | *TBD* | *TBD* | *TBD* | *TBD* | 64 B | to be measured |
+| Intel Core i5-13450HX | x86-64 | Raptor Lake P-core | 48 KiB | 1.25 MiB/core | 20 MiB (shared) | 64 B | measured (L1/L2; L3 masked by TLB) |
 | AMD *(model TBD)* | x86-64 | *TBD* | *TBD* | *TBD* | *TBD* | 64 B | to be measured |
 
 *Ground-truth cache sizes are read automatically from the OS at run time
-(`sysctl` / `/sys` / `Win32_CacheMemory`); the Intel and AMD rows will be filled
-from those readings once the sweeps are run.*
+(`sysctl` / `/sys` / `Win32_CacheMemory`). On Windows, `Win32_CacheMemory` reports
+*per-socket aggregate* sizes rather than per-core, so the Intel L1/L2 columns above
+give the documented per-core figures the single-core probe actually sees (§6.3).*
 
 ### 6.2 Apple M1 (Firestorm P-core) — validated
 The WSS probe produces a clean, well-separated latency curve (Fig. 5). Automatic
@@ -333,10 +338,11 @@ disagrees with the clustering count. The comparison answers the project
 requirement — *which estimator is most accurate and consistent* — with
 **K-Means + Silhouette**, which the pipeline therefore uses to set the level
 count. (On this M1 the independent change-point cost-knee counter also lands on
-three, but it is *not* chosen as the counter because on a well-separated x86
-L1/L2/L3 hierarchy it under-counts; Silhouette is correct on every architecture —
-§6.5.) Change-point is retained only to *localise* each capacity once the count
-is fixed. Table 4 underlines the point: a *fixed* PELT penalty would give
+three. On real x86, however — see §6.3 — no single counter is reliably correct:
+Silhouette resolves four bands on the representative Intel sweep but under-counts
+to two on the others, so the clean cross-estimator agreement seen here on the M1
+is itself a machine-dependent result, not a universal one.) Change-point is
+retained to *localise* each capacity once a count is fixed. Table 4 underlines the point: a *fixed* PELT penalty would give
 anywhere from 6 levels down to 3 depending on an arbitrary hand-set value —
 exactly the manual knob the automatic, penalty-free method removes.
 
@@ -365,33 +371,116 @@ in the *clustering* counts reflects genuine measurement noise in the 7–14 MB
 contention region, which is precisely why change-point's stability there is
 notable.
 
-### 6.3 Intel x86 — *to be measured*
-Unlike Apple Silicon, a mainstream Intel part exposes a documented **three-level
-L1/L2/L3** hierarchy with 64-byte lines, a fine-grained `rdtscp` counter, and a
-working `clflush`. This platform therefore also serves to (a) confirm the
-runtime-calibration path on the invariant TSC and (b) close the §5 loop by
-showing the naive baseline **does** recover the hierarchy where `clflush` works.
-Results below will be populated from `python -m autoecho --method wss --runs 3`.
+### 6.3 Intel x86 (Raptor Lake P-core) — measured
+Auto-Echo was built and run on a **13th-generation Intel Core i5-13450HX**
+(Raptor Lake; 6 performance + 4 efficiency cores), pinned to a performance core
+(logical CPU 0) via `SetThreadAffinityMask`, with the same command as the M1
+(`python -m autoecho --method wss --runs 3`). The native extension compiled under
+MSVC (Visual Studio Build Tools) and the tick→ns conversion **calibrated at
+runtime to 0.383 ns/tick** (a ≈2.61 GHz invariant TSC) with no configured
+frequency — confirming the runtime-calibration path on the invariant TSC exactly
+as designed. This is the framework's first execution on a second, independent ISA,
+and it both **substantiates and qualifies** the architecture-agnostic claim.
 
-**Table 5: Discovered hierarchy vs. ground truth (Intel — placeholder).**
+**The two innermost caches are recovered accurately and stably.** The pointer-chase
+curve (Fig. 8) has a flat **1.6 ns L1 plateau to ~48 KiB** and a flat **~5 ns L2
+plateau to ~1.25 MiB**, whose plateau points vary only ~5–15 % across the three
+sweeps. Both land essentially on the documented per-core Raptor Lake figures
+(48 KiB L1d; 1.25 MiB L2 on this SKU). The *same* unsupervised code path that
+mapped the Apple M1's ARM cache boundaries thus recovers an x86 core's L1 and L2 —
+direct cross-architecture evidence for the inner hierarchy.
 
-| Level | Detected capacity | Median latency | p5–p95 | Ground truth | Error |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| L1 Cache | *TBD* | *TBD* | *TBD* | *TBD* | *TBD* |
-| L2 Cache | *TBD* | *TBD* | *TBD* | *TBD* | *TBD* |
-| L3 Cache | *TBD* | *TBD* | *TBD* | *TBD* | *TBD* |
-| DRAM | — | *TBD* | *TBD* | — | — |
+**The 20 MiB L3 is *not* recovered: it is masked by TLB/page-walk latency.** Past
+~1.3 MiB the latency climbs steeply and saturates at a flat **~143 ns plateau by
+~4–5 MiB** — far below the 20 MiB L3 capacity — and stays there to 64 MiB. With
+4 KiB pages and a randomised chain, once the working set exceeds the TLB's reach
+every dependent load triggers a page-table walk whose own accesses miss to DRAM,
+so the curve reaches DRAM+page-walk latency before the L3 boundary is ever seen.
+The third band the automatic segmenter reports (~3.5 MiB, ~29 ns) is therefore a
+**TLB-transition artifact, not the L3 cache**. This is precisely the confounder
+anticipated in §6.6, here *demonstrated* on real silicon: without a huge-page
+control a 1-D load-latency sweep cannot separate a large last-level cache from
+TLB cost.
 
-Validation accuracy: *TBD*; mean absolute capacity error: *TBD*. Estimator
-comparison, penalty sensitivity, and figures (memory mountain, model selection)
-to be inserted from the Intel run.
+**Table 5: Discovered hierarchy vs. per-core ground truth (Intel i5-13450HX,
+performance core; representative sweep, `--runs 3 --max-mb 64`).**
+
+| Level | Detected capacity | Median latency | p5–p95 | Documented (per P-core) | Note |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| L1 Cache | 56 KiB | 1.62 ns | 1.57–2.12 ns | 48 KiB | +16 % — **matches** |
+| L2 Cache | 1.2 MiB | 5.15 ns | 4.77–7.10 ns | 1.25 MiB | −4 % — **matches** |
+| "L3" *(TLB artifact)* | 3.5 MiB | 29.1 ns | 17.7–54.1 ns | 20 MiB (shared) | L3 masked by TLB |
+| DRAM | — | 143.5 ns | 105–153 ns | — | DRAM + page-walk |
+
+**The automatic level count is unstable on this hardware**, in sharp contrast to
+the M1. The representative sweep is segmented into four bands, but across the three
+sweeps the estimators disagree and vary run to run: K-Means + Silhouette gives a
+modal count of **2** (mean 2.67), the independent change-point cost-knee and the
+Elbow method give **2**, DBSCAN a modal **3**, and GMM a modal **5**. The min–max
+band in Fig. 8 shows why — run-to-run latency spread reaches several hundred per
+cent in the 1.3–4 MiB TLB-transition region, so the "fast vs slow" split (L1+L2 vs
+memory) is the only partition every run agrees on. This is the closely-spaced,
+noisy-level regime in which 1-D Silhouette is known to under-count (Literature
+Review §5), and it is why the clean, unanimous three-level agreement seen on the
+M1 does **not** reproduce here.
+
+**Table 6: Level-count estimators — comparison and stability (Intel i5-13450HX,
+3 sweeps; expected 4).** Compare with the M1's Table 3, where all five estimators
+agreed at three with zero variance; here *no* estimator is both accurate and
+stable.
+
+| Rank | Method | Mean levels | Std (stability) | Modal |
+| :--- | :--- | :---: | :---: | :---: |
+| 1 | GMM + Silhouette | 4.33 | 1.70 | 5 |
+| 2 | Change-point (cost-knee) | 2.00 | 0.00 | 2 |
+| 3 | K-Means + Elbow | 2.00 | 0.00 | 2 |
+| 4 | K-Means + Silhouette | 2.67 | 0.94 | 2 |
+| 5 | DBSCAN | 2.67 | 1.25 | 3 |
+
+The only estimator whose modal count reaches the expected four (GMM) is also the
+least stable (std 1.70); the two perfectly stable counters (change-point cost-knee
+and Elbow) both sit at two. This is the quantitative form of "L1 and L2 recovered,
+deeper structure not reliably counted" — and the direct empirical contrast with
+the M1, where K-Means + Silhouette was the accurate, stable winner.
+
+**Table 7: Change-point level count vs. manual PELT penalty (Intel, representative
+sweep).** Unlike the M1 (Table 4, where the count slid from six to three as the
+penalty rose), the Intel min-curve segments into **four** bands at *every* penalty:
+the L1 / L2 / TLB-transition / DRAM shape is robustly present in the representative
+curve, so it is the *cross-sweep* Silhouette count (Table 6), not the penalty, that
+is unstable.
+
+| Penalty | 1 | 2 | 3 | 4 | 6 | 8 | 10 |
+| :--- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| Levels | 4 | 4 | 4 | 4 | 4 | 4 | 4 |
+
+**Ground-truth validation on Windows needs care.** The framework's automatic
+accuracy reads **0 %**, but this is an artifact of the Windows ground-truth path,
+not of the measurement. `Win32_CacheMemory` reports *per-socket aggregate* cache
+sizes (it returns L1 = 288 KiB = 6 × 48 KiB and L2 = 7680 KiB = 6 × 1.25 MiB),
+whereas the single-core probe measures *per-core* caches; a per-core measurement
+cannot match a summed-over-cores figure. Against the correct **per-core**
+documented sizes, the detected L1 (56 vs 48 KiB) and L2 (1.2 vs 1.25 MiB) both
+match within the factor-of-two tolerance (**2/3** documented caches; L3 misses
+only because it is masked). This exposes a genuine portability gap: `validation.py`
+reads per-core caches on macOS (`sysctl hw.perflevel0.*`) but on Windows needs the
+analogous per-core query (e.g. `GetLogicalProcessorInformationEx`) rather than the
+WMI aggregate — noted as future work.
+
+![Auto-Echo memory latency curve — Intel (Fig. 8)](../data/intel_i5_13450hx/memory_mountain.png)  
+*Fig. 8. Pointer-chase latency vs. working-set size on the Intel i5-13450HX
+performance core (minimum over three sweeps; the light band is the min–max spread).
+L1 (~48 KiB) and L2 (~1.25 MiB) are cleanly and stably resolved; beyond ~1.3 MiB
+TLB/page-walk latency dominates and the curve saturates at ~143 ns before the
+20 MiB L3 can appear, so the third shaded band is a TLB-transition region rather
+than the L3 cache.*
 
 ### 6.4 AMD x86 — *to be measured*
 An AMD (Zen) part likewise exposes L1/L2/L3 with 64-byte lines but a different
 cache organisation (e.g. larger per-CCX L3), providing a second, independent x86
 data point and a further test of architecture-agnosticism.
 
-**Table 6: Discovered hierarchy vs. ground truth (AMD — placeholder).**
+**Table 8: Discovered hierarchy vs. ground truth (AMD — placeholder).**
 
 | Level | Detected capacity | Median latency | p5–p95 | Ground truth | Error |
 | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -404,42 +493,54 @@ Validation accuracy: *TBD*; mean absolute capacity error: *TBD*.
 
 ### 6.5 Cross-platform summary and architecture-agnostic behaviour
 The level count is never hard-coded: it is chosen from the data, so it adapts to
-whatever hierarchy the machine exposes. Because K-Means + Silhouette counts
-distinct latency *levels* directly, the same code path recovers **four** levels
-on a well-separated x86 L1/L2/L3/DRAM hierarchy, **three** on the Apple M1 (where
-L2 and the SLC merge), and **two** on a virtualised host whose timer flattens the
-deeper tiers (Fig. 7). This behaviour was verified on synthetic Intel-, AMD-, M1-
-and VM-shaped curves: K-Means + Silhouette recovered the correct count on every
-profile, whereas a fixed PELT penalty over-segmented and a change-point cost-knee
-under-counted the x86 hierarchy — the empirical reason Silhouette is used as the
-counter. Physical x86 and Windows runs (§6.3–6.5, §7) remain the step that turns
-this from *validated in method* into *validated on hardware*.
+whatever hierarchy the machine exposes. Across the **two real machines** now
+measured, the *same* code path recovers the resolvable cache boundaries on both a
+128-byte-line ARM64 core and a 64-byte-line x86-64 core: **three** levels on the
+Apple M1 (L1, a merged L2/SLC band, DRAM; §6.2) and a clean **L1 (~48 KiB)** and
+**L2 (~1.25 MiB)** on the Intel i5-13450HX (§6.3). This is genuine
+cross-architecture evidence for the inner hierarchy — the core of the
+architecture-agnostic claim.
+
+Two honest qualifications follow from the real x86 run. First, the earlier
+expectation (from *synthetic* Intel/AMD/VM curves) that the method would cleanly
+recover **four** L1/L2/L3/DRAM levels on x86 did **not** hold on real silicon:
+with 4 KiB pages, TLB/page-walk latency masks the 20 MiB L3 (§6.3), so the deep
+hierarchy is not separable without a huge-page control. Second, the level *count*
+is stable and unanimous on the M1 but **unstable** on the Intel part (estimators
+ranged 2–5 across sweeps), so "one counter is correct on every architecture" is
+now known to be too strong. The synthetic curves (Fig. 7) should therefore be read
+as *method verification* — showing the counting machinery adapts to a given
+staircase shape — not as evidence about real x86 behaviour, which §6.3 supersedes.
 
 ![One method, many machines (Fig. 7)](../data/diagram_crossplatform.png)
-*Fig. 7. The same automatic method adapts its level count to the hardware: four
-levels on x86, three on the Apple M1 (L2 and SLC blur together), two on a virtual
-machine. The count is chosen from the data, never hard-coded.*
+*Fig. 7. Method verification on **synthetic** staircase curves: the automatic
+counter adapts its level count to the input shape — four levels on an idealised
+x86 profile, three on an M1-shaped profile, two on a flattened VM profile. These
+are modelled curves, not measurements; the real Intel result (§6.3) exhibits TLB
+effects the synthetic x86 profile omits and should be read in preference to it.*
 
-| Metric | Apple M1 (ARM64) | Intel x86-64 | AMD x86-64 |
+| Metric | Apple M1 (ARM64) | Intel i5-13450HX (x86-64) | AMD x86-64 |
 | :--- | :---: | :---: | :---: |
-| Cache line size | 128 B | *TBD (64 B)* | *TBD (64 B)* |
-| Levels resolved (automatic) | 3 (L1 / L2+SLC / DRAM) | *TBD* | *TBD* |
-| Validation accuracy | 100% (2/2) | *TBD* | *TBD* |
-| Mean abs. capacity error | 19.9% | *TBD* | *TBD* |
-| Naive baseline (with `clflush`) | n/a (no ARM flush) | *TBD* | *TBD* |
+| Cache line size | 128 B | 64 B | *TBD (64 B)* |
+| Levels resolved (automatic) | 3 (L1 / L2+SLC / DRAM) | L1 + L2 (stable); L3 masked by TLB | *TBD* |
+| Caches matched (per-core ground truth) | 2/2 documented | 2/3 (L1, L2) | *TBD* |
+| Count stability across 3 sweeps | unanimous, std 0 | unstable (2–5) | *TBD* |
+| Naive baseline (with `clflush`) | n/a (no ARM flush) | *not yet run* | *TBD* |
 
-A combined cross-machine figure overlaying all three real latency curves
-(`compare_curves.py`) — the strongest single piece of evidence for the
-architecture-agnostic claim — will be added once at least the Intel curve exists.
+With two real curves now in hand (M1 and Intel), a combined cross-machine overlay
+(`compare_curves.py`) plotting the M1's 128 KiB / 12 MiB knees against the Intel
+core's 48 KiB / 1.25 MiB knees on one log–log axis is the natural next figure; the
+AMD curve would complete it.
 
 ### 6.6 Threats to validity
 Following the structure of the reference paper's own threats section [1]:
 
-- **External validity (generalisation).** Results are from a *single* machine
-  (one Apple M1 performance core). "Cross-platform" and "architecture-agnostic"
-  are therefore claims about the *design* and portable implementation, not yet
-  experimentally demonstrated; the Intel/AMD runs (§6.3–6.5) are required to
-  substantiate them.
+- **External validity (generalisation).** Results now span *two* machines (an
+  Apple M1 performance core and an Intel Raptor Lake performance core), which
+  demonstrates architecture-agnostic recovery of the **inner** hierarchy (L1, L2)
+  across ARM64 and x86-64. Generality of the *deep* hierarchy and of the level
+  *count* is not established: the Intel L3 is masked by TLB effects and its count
+  is unstable (§6.3), and an AMD data point is still outstanding.
 - **Construct validity (what is measured).** The pointer chase measures
   *load-to-use* latency of a serialised dependent chain, which includes base
   pipeline cost — so the ~1.53 ns L1 figure is not directly comparable to the
@@ -447,9 +548,12 @@ Following the structure of the reference paper's own threats section [1]:
   differences between tiers (as the paper itself argues in §6.2).
 - **Confounding — TLB and page walks.** As the working set grows, the number of
   distinct pages touched grows with it; deep-plateau latency therefore includes
-  DTLB-miss and page-walk cost, which page alignment does *not* remove. The
-  mid-cache region (~10–14 MB) cannot yet be cleanly separated into cache vs TLB
-  effects; a huge-page control and performance counters are needed.
+  DTLB-miss and page-walk cost, which page alignment does *not* remove. On the M1
+  this blurs the mid-cache (~10–14 MB) region; on the Intel part it is decisive —
+  with 4 KiB pages the page-walk penalty saturates the curve at ~143 ns by ~4 MiB
+  and **masks the 20 MiB L3 entirely** (§6.3). This is no longer hypothetical: it
+  is the single largest limitation on real x86, and lifting it needs a huge-page
+  (2 MiB) allocation and ideally performance-counter corroboration.
 - **SLC attribution.** Automatic model selection reports the L2 and SLC as one
   merged mid-band; the finer split (forced only at an explicit penalty ~ 4) is
   *consistent with* a distinct L2 and the M1 SLC but is not uniquely attributable
@@ -463,10 +567,18 @@ Following the structure of the reference paper's own threats section [1]:
   fully independent of vendor documentation. Stricter one-to-one matching at
   multiple tolerances (±10/25/50%) and an external `lmbench` cross-check are
   planned.
-- **Conclusion validity.** With automatic model selection the level count is
-  stable across sweeps and all five estimators agree on three levels (Table 3);
-  the residual run-to-run variation is confined to the less-consistent DBSCAN and
-  GMM counts, which are not used to set the count.
+- **Ground truth on Windows.** The Windows `Win32_CacheMemory` path reports
+  *per-socket aggregate* cache sizes, not the per-core sizes the single-core probe
+  measures, so the automatic accuracy metric is invalid on Windows (it reads 0 %
+  on the Intel part despite correct L1/L2 knees; §6.3). The macOS/Linux paths use
+  per-core `sysctl`/`sysfs` values and are unaffected; the fix is a per-core
+  Windows query (`GetLogicalProcessorInformationEx`).
+- **Conclusion validity.** On the M1 the level count is stable across sweeps and
+  all five estimators agree on three levels (Table 3). This stability is
+  **machine-dependent, not universal**: on the Intel part the same estimators
+  disagree and vary run to run (2–5 levels; §6.3), because the TLB-transition
+  region is genuinely noisy. The robust cross-machine claim is therefore limited
+  to the L1/L2 boundaries, which are stable on both.
 
 ---
 
@@ -474,14 +586,19 @@ Following the structure of the reference paper's own threats section [1]:
 Auto-Echo demonstrates accurate, unprivileged, architecture-agnostic hierarchy
 discovery on Apple Silicon. Remaining directions:
 
-- **x86 Linux and Windows validation.** The framework already builds and runs on
-  Linux and Windows (Section 4.1); the remaining step is execution on physical
-  x86 machines, where `rdtscp` is fine-grained and a documented three-level
-  L1/L2/L3 exists. This is expected to yield a genuine L3 plateau and confirm the
-  runtime-calibration path on the invariant TSC, converting the cross-platform
-  claim from *supported in code* to *empirically demonstrated*. Bare-metal hosts
-  are preferred over virtual machines, whose virtualised timers can flatten the
-  curve.
+- **Huge-page control to unmask the L3 (highest priority).** The Intel run (§6.3)
+  shows that with 4 KiB pages TLB/page-walk latency saturates the curve before the
+  20 MiB L3 is reached. Allocating the buffer on 2 MiB huge pages
+  (`MEM_LARGE_PAGES` on Windows, `MADV_HUGEPAGE`/`hugetlbfs` on Linux) cuts the
+  page-walk cost sharply and should expose the L3 plateau, converting the x86
+  result from "L1/L2 recovered" to a full L1/L2/L3/DRAM map. This is now the single
+  most valuable next experiment. (The runtime-calibration path on the invariant TSC
+  is already confirmed on real x86 — 0.383 ns/tick on the i5-13450HX.)
+- **AMD x86 and per-core Windows ground truth.** An AMD (Zen) part would add a
+  second, differently-organised x86 data point; alongside it, `validation.py`'s
+  Windows path should read *per-core* caches (`GetLogicalProcessorInformationEx`)
+  instead of the `Win32_CacheMemory` per-socket aggregate, so the automatic
+  accuracy metric is valid on Windows (§6.3, §6.6).
 - **Cross-machine comparison figure.** A helper (`compare_curves.py`) overlays
   the per-machine latency curves (`wss_curve.csv`) on a single log–log axis with
   each machine's detected cache boundaries annotated. Comparing the M1's
@@ -515,14 +632,18 @@ capacities to within 0.3 octaves (both documented caches matched within a factor
 of two); the 12 MiB L2 and the OS-unreported ~8 MB System-Level Cache resolve as
 a single mid-band, with their finer split a candidate sub-structure that further
 experiments must confirm (§6.6).
-Validation on Intel and AMD x86 machines — which expose a documented three-level
-L1/L2/L3 hierarchy and a working `clflush`, and whose result tables (§6.3–6.5)
-are laid out ready to populate — is the remaining step to convert the
-architecture-agnostic claim from *demonstrated on one platform* to *demonstrated
-across architectures*. On the evidence to date, Auto-Echo is best characterised as
-a **portable-design framework with an Apple M1 case study**: an accurate,
-critically evaluated analysis pipeline whose cross-architecture generality is
-designed-in and awaiting empirical confirmation.
+A second real machine — an Intel Core i5-13450HX on Windows/x86-64 — was then
+measured with the identical pipeline. The same unsupervised code path recovered
+its per-core L1 (~48 KiB) and L2 (~1.25 MiB), giving genuine cross-architecture
+evidence for the inner hierarchy; equally, it exposed the method's limits on real
+x86, where 4 KiB-page TLB/page-walk latency masks the 20 MiB L3 and destabilises
+the automatic level count. Auto-Echo is therefore best characterised as a
+**portable framework validated on two ISAs for the inner cache hierarchy**: L1 and
+L2 are recovered on both ARM64 and x86-64, while resolving the deep hierarchy on
+x86 (via a huge-page control) and adding an AMD data point are the clearly-scoped
+remaining steps. The honest negative — a masked L3 and an unstable count on x86 —
+is itself a finding, delimiting exactly where a user-space, single-core,
+small-page pointer chase can and cannot map a memory hierarchy.
 
 ---
 
