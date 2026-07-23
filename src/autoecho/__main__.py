@@ -46,7 +46,7 @@ def run_wss(args):
     curve = sweeps[0]  # representative curve for the headline figures
 
     print("[2/5] Discovering memory levels (change-point + clustering)...")
-    result = analyze(curve, penalty=args.penalty)
+    result = analyze(curve, penalty=args.penalty, capacity_method=args.capacity_method)
     levels = result["levels"]
     print(f"      change-point: {result['n_levels_changepoint']} | "
           f"k-means(sil): {result['n_levels_kmeans']} | "
@@ -56,7 +56,8 @@ def run_wss(args):
     print("[3/5] Comparative evaluation across estimators...")
     gt = get_ground_truth()
     comparison = compare_methods(sweeps, gt, penalty=args.penalty)
-    cap_acc = capacity_accuracy(sweeps, gt, penalty=args.penalty)
+    cap_acc = capacity_accuracy(sweeps, gt, penalty=args.penalty,
+                                capacity_method=args.capacity_method)
     if len(comparison):
         top = comparison.iloc[0]
         # This ranks LEVEL-COUNT stability only. Change-point is the productive
@@ -126,14 +127,41 @@ def run_samples(args):
     print("\nDone (naive baseline).")
 
 
+def run_lof(args):
+    """Reproduce the dissertation §5 evidence that the naive baseline's failure is
+    structural: LOF removes a fraction of points but the survivors stay pinned to
+    integer timer-tick multiples, so filtering cannot recover the hierarchy."""
+    try:
+        from autoecho.evaluation import evaluate_lof_mitigation
+    except ImportError as e:
+        print(f"\n[setup error] {e}\n", file=sys.stderr)
+        sys.exit(1)
+    print("\nRunning LOF-mitigation check on the naive sample-based baseline...")
+    r = evaluate_lof_mitigation()
+    print(f"  raw samples:                 {r['n_raw']}")
+    print(f"  LOF removed:                 {r['lof_removed_fraction']*100:.1f}%")
+    print(f"  timer tick:                  {r['timer_tick_ns']:.3f} ns")
+    print(f"  on timer grid after LOF:     {r['fraction_on_timer_grid_after_lof']*100:.1f}%")
+    print(f"  distinct tick levels after:  {r['n_distinct_tick_levels_after_lof']}")
+    print("\nInterpretation: filtering removes points but the survivors remain "
+          "quantised to the timer grid — the failure is structural, not noise.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Auto-Echo: Automated Discovery of Memory Hierarchy Latency Patterns")
-    parser.add_argument("--method", choices=["wss", "samples"], default="wss",
-                        help="wss = pointer-chase sweep (primary); samples = naive baseline")
+    parser.add_argument("--method", choices=["wss", "samples", "lof-check"], default="wss",
+                        help="wss = pointer-chase sweep (primary); samples = naive "
+                             "baseline; lof-check = reproduce the §5 LOF-mitigation evidence")
     parser.add_argument("--output-dir", type=str, default="data")
     # WSS options
     parser.add_argument("--max-mb", type=_positive_int, default=256, help="max working-set size (MiB)")
+    parser.add_argument("--capacity-method", choices=["edge", "onset", "hybrid"],
+                        default="edge",
+                        help="cache-capacity estimator: edge (default, stable, biased "
+                             "+16-23%%); hybrid (onset on flat plateaus, edge otherwise "
+                             "-- recovers a sharp knee like the M1 L1 exactly); onset "
+                             "(exact on flat plateaus, unstable on sloping ones)")
     parser.add_argument("--hops", type=_positive_int, default=1 << 20, help="min pointer-chase hops per timing window")
     parser.add_argument("--repeats", type=_positive_int, default=5, help="repeats per size (minimum is taken)")
     parser.add_argument("--seed", type=int, default=42, help="RNG seed for reproducible permutations")
@@ -150,6 +178,8 @@ def main():
     print("=== Auto-Echo Framework ===")
     if args.method == "wss":
         run_wss(args)
+    elif args.method == "lof-check":
+        run_lof(args)
     else:
         run_samples(args)
 

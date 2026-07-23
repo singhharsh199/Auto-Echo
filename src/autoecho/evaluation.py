@@ -141,7 +141,8 @@ def evaluate_lof_mitigation(penalty: float = 3.0) -> dict:
     }
 
 
-def capacity_accuracy(sweeps: list, ground_truth: dict, penalty: float = None) -> dict:
+def capacity_accuracy(sweeps: list, ground_truth: dict, penalty: float = None,
+                      capacity_method: str = "edge") -> dict:
     """Mean absolute percentage error of change-point cache capacities vs ground
     truth, averaged over sweeps (change-point is the only estimator that
     localises capacities, not just counts).
@@ -152,7 +153,8 @@ def capacity_accuracy(sweeps: list, ground_truth: dict, penalty: float = None) -
     errs = []
     accs = []
     for curve in sweeps:
-        levels = detect_levels_changepoint(curve, penalty=penalty)
+        levels = detect_levels_changepoint(curve, penalty=penalty,
+                                           capacity_method=capacity_method)
         caps = levels["capacity_bytes"].dropna().tolist()
         # Reuse the caller's ground-truth reading instead of re-querying the OS.
         v = validate(caps, ground_truth=ground_truth)

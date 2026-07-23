@@ -55,6 +55,27 @@ def test_dbscan_returns_nonnegative_count(three_level_curve):
     assert cluster_level_count_dbscan(three_level_curve) >= 0
 
 
+def test_capacity_method_edge_is_default(three_level_curve):
+    # The default estimator must be "edge" (unchanged behaviour); onset/hybrid
+    # run without error and keep the same segmentation, only the capacity differs.
+    base = detect_levels_changepoint(three_level_curve)
+    edge = detect_levels_changepoint(three_level_curve, capacity_method="edge")
+    assert (base["capacity_bytes"].fillna(-1).tolist()
+            == edge["capacity_bytes"].fillna(-1).tolist())
+    for m in ["onset", "hybrid"]:
+        lv = detect_levels_changepoint(three_level_curve, capacity_method=m)
+        assert len(lv) == len(edge)
+
+
+def test_onset_helper_lands_on_flat_plateau_knee():
+    from autoecho.analysis import _onset_capacity, _plateau_is_flat
+    wss = np.array([1000.0, 2000.0, 4000.0, 8000.0])
+    lat = np.array([1.5, 1.5, 1.5, 9.0])          # flat, then a sharp step
+    assert _plateau_is_flat(lat[:3])              # the flat part is flat
+    assert not _plateau_is_flat(lat)              # including the step, it is not
+    assert _onset_capacity(wss, lat) == 4000.0    # onset = last size on the floor
+
+
 def test_penalty_sensitivity_monotonic_trend(three_level_curve):
     sens = penalty_sensitivity(three_level_curve, penalties=[1.0, 5.0, 20.0])
     # Higher penalty must never yield MORE levels than a lower penalty.

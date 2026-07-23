@@ -6,6 +6,22 @@ Harsh Raj Singh
 *London, United Kingdom*  
 *ec25303@qmul.ac.uk*
 
+## Declaration of Originality
+
+I, Harsh Raj Singh, declare that this dissertation and the work it presents are my
+own. Where I have drawn on the published work of others it is explicitly cited, and
+the only verbatim material from other sources is clearly marked as quotation.
+Generative-AI tools were used in accordance with the programme's policy, as detailed
+in the Generative-AI Accountability Statement (Appendix A). This work has not been
+submitted, in whole or in part, for any other degree or qualification.
+
+*Signed:* \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_ &nbsp;&nbsp; *Date:* \_\_\_\_\_\_\_\_\_\_\_\_\_
+
+## Acknowledgements
+
+*[To be completed by the author — e.g. project supervisor, family, and any compute or
+resource acknowledgements.]*
+
 ## 1. Abstract
 The memory hierarchy of modern processors is increasingly complex, sparsely
 documented, and abstracted away from user-space software, limiting the ability
@@ -325,12 +341,14 @@ nominal capacity; this was tested and rejected.
 †**On the SLC.** The M1 performance cores share a 12 MiB L2 *and* an ~8 MiB
 System-Level Cache (SLC) whose capacities are so close that the automatic method
 resolves them as a **single merged mid-band** — which is why the honest,
-reproducible answer is three levels, not four. Forcing a finer segmentation (an
-explicit change-point penalty ~ 4) splits this band into two closely spaced knees
-(~9.8 MiB and ~13.9 MiB) consistent with a distinct L2 and the OS-unreported SLC
-[13]; but that split is *not* selected by automatic model selection and is
-reported only as a **candidate finer-grained sub-structure** (§6.6), not a
-headline level. Separating cache from shared-L2 contention or TLB effects there
+reproducible answer is three levels, not four. Forcing a finer segmentation splits
+this band into two knees at **~9.8 MiB and ~19.7 MiB** — a split that is *stable
+across every explicit penalty from 3 to 6*, so it is a robust feature of the curve,
+not a penalty artefact. The ~9.8 MiB knee is consistent with the documented 12 MiB
+L2 and the ~19.7 MiB knee with the onset of the DRAM plateau, with the intervening
+band consistent with (but not uniquely attributable to) the OS-unreported SLC [13].
+This split is *not* selected by automatic model selection and is reported only as a
+**candidate finer-grained sub-structure** (§6.6), not a headline level. Separating cache from shared-L2 contention or TLB effects there
 would need performance-counter, per-core-type and cross-core experiments.
 
 **Table 2: Model selection — Elbow and Silhouette agree (Fig. 6).**
@@ -545,10 +563,19 @@ effects the synthetic x86 profile omits and should be read in preference to it.*
 | Count stability across 3 sweeps | unanimous, std 0 | unstable (2–5) | *TBD* |
 | Naive baseline (with `clflush`) | n/a (no ARM flush) | *not yet run* | *TBD* |
 
-With two real curves now in hand (M1 and Intel), a combined cross-machine overlay
-(`compare_curves.py`) plotting the M1's 128 KiB / 12 MiB knees against the Intel
-core's 48 KiB / 1.25 MiB knees on one log–log axis is the natural next figure; the
-Apple M5 curve would complete it.
+With two real curves now in hand, a combined cross-machine overlay
+(`compare_curves.py`) plots the M1's 128 KiB / 12 MiB knees against the Intel
+core's 48 KiB / 1.25 MiB knees on one log–log axis (Fig. 9). Both are flat in L1;
+the M1 then carries a single high **L2+SLC** shelf (~9 ns) where the Intel shows a
+distinct **L1→L2→L3** staircase; both climb to a ~130–145 ns DRAM plateau. This is
+direct visual evidence for architecture-agnostic recovery of the inner hierarchy
+across ARM64 and x86-64. The Apple M5 curve would extend it to three machines.
+
+![Cross-machine latency overlay (Fig. 9)](../data/compare_mountain.png)
+*Fig. 9. Auto-Echo latency curves for the Apple M1 (ARM64) and Intel i5-13450HX
+(x86-64) on one axis, each machine's detected cache boundaries marked (dotted).
+L1 and L2 are recovered on both ISAs; the Intel deep region is compressed by 4 KiB
+page-walk (TLB) latency (§6.3).*
 
 **Capacity-estimator comparison.** The systematic +23% edge bias (§6.2) prompted
 evaluating two alternatives to the default *plateau-edge* estimator (capacity =
@@ -557,12 +584,12 @@ the largest working-set size still served at plateau latency): the transition
 estimator (the last size still on the plateau floor before latency departs by
 10%). Absolute error against per-core ground truth:
 
-| Level (per-core GT) | Edge (default) | Midpoint | Onset |
-| :--- | :---: | :---: | :---: |
-| Apple M1 — L1 (128 KiB) | +23.0% | +27.4% | **+0.0%** |
-| Apple M1 — L2+SLC (12 MiB) | +16.1% | +20.2% | −74.7% |
-| Intel — L1 (48 KiB) | +16.0% | +20.1% | −98.3% |
-| Intel — L2 (1.25 MiB) | −1.5% | +2.0% | −75.4% |
+| Level (per-core GT) | Edge (default) | Midpoint | Onset | Hybrid |
+| :--- | :---: | :---: | :---: | :---: |
+| Apple M1 — L1 (128 KiB) | +23.0% | +27.4% | +0.0% | **+0.0%** |
+| Apple M1 — L2+SLC (12 MiB) | +16.1% | +20.2% | −74.7% | +16.1% |
+| Intel — L1 (48 KiB) | +16.0% | +20.1% | −98.3% | +16.0% |
+| Intel — L2 (1.25 MiB) | −1.5% | +2.0% | −75.4% | −1.5% |
 
 The result is a clear **accuracy-versus-robustness trade-off**. The onset estimator
 is *exact* on the M1 L1 (+0.0%, recovering the nominal 128 KiB) — which confirms
@@ -579,9 +606,15 @@ automatic, threshold-free tool is worth more than an estimator that is occasiona
 exact and usually wrong. This also fixes the honest reading of the headline
 accuracy — Auto-Echo reliably places a *detected boundary within one octave* of
 each documented cache, with a characterised upward bias, rather than recovering the
-nominal capacity to a tight percentage. A **flat-plateau-gated hybrid** (onset only
-where the plateau slope is near-zero, edge otherwise) is the one plausible route to
-combining the two and is noted as future work (§7).
+nominal capacity to a tight percentage. The **flat-plateau-gated hybrid** — onset
+where the plateau is flat, edge otherwise — is now implemented as an opt-in
+estimator (`--capacity-method hybrid`, rightmost column): it recovers the M1 L1
+**exactly** (128 KiB, +0.0%) and, because the M1's sloping L2+SLC band and every
+Intel plateau fail the flatness gate, falls back to the stable edge there, so it is
+never catastrophic. It is opt-in rather than the default only because it shifts the
+reported M1 L1 capacity from 157 KiB to the nominal 128 KiB; the default remains the
+edge estimator, and the hybrid is available for a user who wants nominal capacities
+on well-separated hierarchies.
 
 ### 6.6 Threats to validity
 Following the structure of the reference paper's own threats section [1]:

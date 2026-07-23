@@ -54,6 +54,48 @@ def _human_bytes(n: float) -> str:
     return f"{n:.1f} TiB"
 
 
+def _plateau_is_flat(lat, tol: float = 0.15) -> bool:
+    """True if a plateau's latency spread (p90/p10) is within ``tol`` (i.e. the
+    plateau is genuinely flat, not sloping). The onset estimator is only
+    meaningful on a flat plateau."""
+    lo = float(np.percentile(lat, 10))
+    hi = float(np.percentile(lat, 90))
+    return lo > 0 and (hi / lo - 1.0) <= tol
+
+
+def _onset_capacity(wss, lat, tau: float = 0.15, floor_pct: int = 10) -> float:
+    """Capacity as the *onset* of the rise: the last size still on the plateau
+    floor before latency first departs it by ``tau``. Exact on a flat plateau
+    with a sharp knee; use only when :func:`_plateau_is_flat`."""
+    floor = float(np.percentile(lat, floor_pct))
+    thresh = floor * (1.0 + tau)
+    onset = float(wss[0])
+    for w, x in zip(wss, lat):
+        if x <= thresh:
+            onset = float(w)
+        else:
+            break  # first sustained departure
+    return onset
+
+
+def _level_capacity(wss, lat, method: str) -> float:
+    """Estimate a cache's capacity from its plateau's working-set sizes/latencies.
+
+    ``edge`` (default): the plateau's upper edge -- stable, but biased +16-23%
+    upward (soft-knee effect). ``onset``: the departure point -- exact on flat
+    plateaus, catastrophic on sloping ones. ``hybrid``: onset on a flat plateau,
+    edge otherwise -- recovers the nominal size where the knee is sharp (e.g. the
+    M1 L1) without the onset's instability elsewhere. See the §6.5
+    capacity-estimator comparison."""
+    wss = np.asarray(wss, dtype=float)
+    lat = np.asarray(lat, dtype=float)
+    if method == "onset":
+        return _onset_capacity(wss, lat)
+    if method == "hybrid":
+        return _onset_capacity(wss, lat) if _plateau_is_flat(lat) else float(wss.max())
+    return float(wss.max())  # "edge" (default)
+
+
 def _knee_index(xs, ys) -> int:
     """Index of the knee of ``(xs, ys)``: the point of maximum perpendicular
     distance from the chord joining the first and last points, on min-max
@@ -100,6 +142,7 @@ def detect_levels_changepoint(
     merge_ratio: float = 1.4,
     smooth_kernel: int = 3,
     kmax: int = DEFAULT_MAX_K,
+    capacity_method: str = "edge",
 ) -> pd.DataFrame:
     """Detect memory levels as plateaus in the latency curve.
 
@@ -168,9 +211,10 @@ def detect_levels_changepoint(
             name = LEVEL_NAMES[i]
         else:
             name = f"L{i + 1} Cache"
-        # Capacity = last working-set size still served at this level's speed,
-        # i.e. the largest wss in the plateau before it steps up.
-        capacity = float(wss.max()) if i < n_levels - 1 else float("nan")
+        # Capacity of this level's cache (NaN for the final/DRAM level). The
+        # estimator is selectable; "edge" (default) is the plateau's upper edge.
+        capacity = (_level_capacity(wss, lat, capacity_method)
+                    if i < n_levels - 1 else float("nan"))
         rows.append(
             {
                 "level_name": name,
@@ -315,7 +359,8 @@ def silhouette_curve(curve: pd.DataFrame, max_k: int = DEFAULT_MAX_K) -> list:
     return out
 
 
-def analyze(curve: pd.DataFrame, penalty: float | None = None) -> dict:
+def analyze(curve: pd.DataFrame, penalty: float | None = None,
+            capacity_method: str = "edge") -> dict:
     """Run the full level-discovery analysis and reconcile the estimators.
 
     ``penalty=None`` (default) selects the *number* of levels by K-Means +
@@ -325,7 +370,8 @@ def analyze(curve: pd.DataFrame, penalty: float | None = None) -> dict:
     an **independent** change-point count via the cost-knee criterion
     (:func:`changepoint_level_count`), which is *not* seeded by the Silhouette k,
     so the agreement it shows is genuine rather than circular."""
-    levels = detect_levels_changepoint(curve, penalty=penalty)
+    levels = detect_levels_changepoint(curve, penalty=penalty,
+                                       capacity_method=capacity_method)
     k_kmeans, sil_kmeans = cluster_level_count(curve, algorithm="kmeans")
     k_gmm, sil_gmm = cluster_level_count(curve, algorithm="gmm")
     k_dbscan = cluster_level_count_dbscan(curve)

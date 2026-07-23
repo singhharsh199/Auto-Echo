@@ -44,3 +44,6 @@ Automated memory hierarchy latency detection - Claude_files/
 *.log
 missfont.log
 timecheck
+
+# Copyrighted third-party reference paper — kept locally, never redistributed
+Klimis Shouting at Memory_ Where Did My Write Go_ 2025 Accepted.pdf
