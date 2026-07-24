@@ -83,6 +83,117 @@ def _sysctl(name: str):
         return None
 
 
+def _windows_ground_truth_percore() -> dict:
+    """Per-core data-cache sizes for CPU 0 via ``GetLogicalProcessorInformationEx``.
+
+    The legacy WMI class ``Win32_CacheMemory`` reports **per-socket aggregate**
+    sizes on hybrid Intel parts (e.g. L1 = 288 KiB = 6 x 48 KiB summed across the
+    P-cores), which makes validation read 0% even when the per-core knees are
+    correct. ``GetLogicalProcessorInformationEx(RelationCache, ...)`` instead
+    returns one record per *physical* cache with its true (un-summed)
+    ``CacheSize`` and the affinity mask of the logical processors it serves, so
+    we can select exactly the data/unified caches that serve CPU 0 -- the P-core
+    the probe pins to.
+
+    Uses ctypes only (no native rebuild). Returns ``{}`` on any failure so the
+    caller can fall back to the WMI path."""
+    import ctypes
+    import struct
+    from ctypes import wintypes
+
+    RelationCache = 2  # LOGICAL_PROCESSOR_RELATIONSHIP.RelationCache
+    # PROCESSOR_CACHE_TYPE: 0=Unified, 1=Instruction, 2=Data, 3=Trace. A load-
+    # latency sweep only exercises the data-side caches (Data + Unified).
+    DATA_LIKE = (0, 2)
+
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        glpi_ex = kernel32.GetLogicalProcessorInformationEx
+        glpi_ex.argtypes = [wintypes.DWORD, ctypes.c_void_p,
+                            ctypes.POINTER(wintypes.DWORD)]
+        glpi_ex.restype = wintypes.BOOL
+
+        length = wintypes.DWORD(0)
+        # First call sizes the buffer (returns FALSE / ERROR_INSUFFICIENT_BUFFER).
+        glpi_ex(RelationCache, None, ctypes.byref(length))
+        if length.value == 0:
+            return {}
+        buf = (ctypes.c_byte * length.value)()
+        if not glpi_ex(RelationCache, buf, ctypes.byref(length)):
+            return {}
+        raw = bytes(buf)
+    except Exception:
+        return {}
+
+    gt = {}
+    pos, n = 0, length.value
+    while pos + 8 <= n:
+        # SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX header: Relationship, Size.
+        relationship = struct.unpack_from("<I", raw, pos)[0]
+        size = struct.unpack_from("<I", raw, pos + 4)[0]
+        if size == 0:
+            break
+        if relationship == RelationCache:
+            # CACHE_RELATIONSHIP begins at offset 8 (the union is 8-byte aligned):
+            #   Level(BYTE@0) Assoc(BYTE@1) LineSize(WORD@2) CacheSize(DWORD@4)
+            #   Type(DWORD@8) ... GroupMask.Mask(KAFFINITY@32) Group(WORD@40).
+            # The first GROUP_AFFINITY sits at offset 32 in BOTH the pre-20H2
+            # (Reserved[20]) and 20H2+ (Reserved[18]+GroupCount WORD) layouts.
+            c = pos + 8
+            level = raw[c + 0]
+            cache_size = struct.unpack_from("<I", raw, c + 4)[0]
+            ctype = struct.unpack_from("<I", raw, c + 8)[0]
+            mask = struct.unpack_from("<Q", raw, c + 32)[0]
+            group = struct.unpack_from("<H", raw, c + 40)[0]
+            serves_cpu0 = (group == 0) and bool(mask & 1)
+            if ctype in DATA_LIKE and serves_cpu0 and cache_size > 0:
+                key = f"L{level}"
+                # CPU 0 is served by exactly one data/unified cache per level; if
+                # a level somehow recurs, keep the smaller (closer, more private)
+                # one rather than a larger shared duplicate.
+                if key not in gt or cache_size < gt[key]:
+                    gt[key] = cache_size
+        pos += size
+    return gt
+
+
+def _windows_ground_truth_cim() -> dict:
+    """Labelled fallback: cache sizes via WMI ``Win32_CacheMemory`` (CIM).
+
+    NOTE: on hybrid Intel parts this reports per-socket **aggregate** sizes (L1
+    summed across cores), so it can over-count and mismatch a per-core sweep --
+    it is used only when the accurate per-core
+    ``GetLogicalProcessorInformationEx`` path is unavailable. Level: 3->L1,
+    4->L2, 5->L3; MaxCacheSize is in KiB."""
+    gt = {}
+    try:
+        import json
+
+        out = subprocess.check_output(
+            [
+                "powershell", "-NoProfile", "-Command",
+                "Get-CimInstance Win32_CacheMemory | "
+                "Select-Object Level,MaxCacheSize | ConvertTo-Json",
+            ],
+            stderr=subprocess.DEVNULL, text=True,
+        )
+        data = json.loads(out)
+        if isinstance(data, dict):
+            data = [data]
+        level_map = {3: "L1", 4: "L2", 5: "L3"}
+        for entry in data:
+            name = level_map.get(entry.get("Level"))
+            size_kb = entry.get("MaxCacheSize")
+            if name and size_kb:
+                size = int(size_kb) * 1024
+                # Keep the largest instance reported for each level.
+                if name not in gt or size > gt[name]:
+                    gt[name] = size
+    except Exception:
+        pass
+    return gt
+
+
 def get_ground_truth() -> dict:
     """Return documented data-cache capacities in bytes, keyed by level name.
 
@@ -133,34 +244,11 @@ def get_ground_truth() -> dict:
             pass
 
     elif system == "Windows":
-        # Best-effort via CIM. Win32_CacheMemory.Level: 3->L1, 4->L2, 5->L3;
-        # MaxCacheSize is in KiB. Verify against vendor docs, as some firmware
-        # reports these fields inconsistently.
-        try:
-            import json
-
-            out = subprocess.check_output(
-                [
-                    "powershell", "-NoProfile", "-Command",
-                    "Get-CimInstance Win32_CacheMemory | "
-                    "Select-Object Level,MaxCacheSize | ConvertTo-Json",
-                ],
-                stderr=subprocess.DEVNULL, text=True,
-            )
-            data = json.loads(out)
-            if isinstance(data, dict):
-                data = [data]
-            level_map = {3: "L1", 4: "L2", 5: "L3"}
-            for entry in data:
-                name = level_map.get(entry.get("Level"))
-                size_kb = entry.get("MaxCacheSize")
-                if name and size_kb:
-                    size = int(size_kb) * 1024
-                    # Keep the largest instance reported for each level.
-                    if name not in gt or size > gt[name]:
-                        gt[name] = size
-        except Exception:
-            pass
+        # Per-core sizes via GetLogicalProcessorInformationEx are correct; the WMI
+        # Win32_CacheMemory path is a labelled fallback reporting per-socket
+        # AGGREGATE sizes -- the cause of the historical 0% validation on hybrid
+        # Intel parts. Prefer per-core; fall back only if it yields nothing.
+        gt = _windows_ground_truth_percore() or _windows_ground_truth_cim()
 
     return gt
 

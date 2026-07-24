@@ -30,6 +30,12 @@
 /* ---------- monotonic wall clock (for timer calibration) ---------- */
 #if defined(_WIN32)
 #include <windows.h>
+#if defined(_MSC_VER)
+/* The token/privilege APIs used by the large-page allocator (OpenProcessToken,
+ * LookupPrivilegeValue, AdjustTokenPrivileges) live in advapi32; kernel32
+ * (VirtualAlloc/VirtualFree/GetLargePageMinimum) is linked by default. */
+#pragma comment(lib, "advapi32.lib")
+#endif
 static double wall_ns(void) {
     LARGE_INTEGER c, f;
     QueryPerformanceCounter(&c);
@@ -146,6 +152,79 @@ static void aligned_free_portable(void *p) {
 #endif
 }
 
+/* ---------- optional 2 MiB large-page buffer (Windows, gated) ----------
+ * With default 4 KiB pages the pointer chase touches a fresh page every few
+ * hops once the working set is large, so TLB misses and page-walk latency pile
+ * onto the deep-memory plateau and can *mask* a large shared last-level cache
+ * (the i5-13450HX's ~20 MiB L3 saturates behind the page walk by ~4 MiB).
+ * Backing the buffer with 2 MiB large pages cuts the distinct-page count ~512x,
+ * suppressing the page-walk term so the L3 band becomes visible. This path is
+ * OFF by default and enabled per call; on ANY failure it returns NULL and the
+ * caller falls back to the ordinary 4 KiB-page allocation (never crashes).
+ * Requires SeLockMemoryPrivilege ("Lock pages in memory") granted to the user
+ * (secpol.msc) and an elevated process. */
+#if defined(_WIN32)
+static void *alloc_large_pages(size_t size, DWORD *out_err) {
+    HANDLE token = NULL;
+    TOKEN_PRIVILEGES tp;
+    LUID luid;
+    SIZE_T lp;
+    size_t rounded;
+    void *p;
+
+    if (out_err) *out_err = 0;
+    if (!OpenProcessToken(GetCurrentProcess(),
+                          TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token)) {
+        if (out_err) *out_err = GetLastError();
+        return NULL;
+    }
+    if (!LookupPrivilegeValue(NULL, SE_LOCK_MEMORY_NAME, &luid)) {
+        if (out_err) *out_err = GetLastError();
+        CloseHandle(token);
+        return NULL;
+    }
+    tp.PrivilegeCount = 1;
+    tp.Privileges[0].Luid = luid;
+    tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    /* AdjustTokenPrivileges returns TRUE even when the account does not hold the
+     * privilege; the true outcome is in GetLastError -- ERROR_NOT_ALL_ASSIGNED
+     * (1300) means "Lock pages in memory" is not granted to this user. Normalise
+     * that to ERROR_PRIVILEGE_NOT_HELD (1314) for the caller's warning. */
+    AdjustTokenPrivileges(token, FALSE, &tp, sizeof(tp), NULL, NULL);
+    if (GetLastError() != ERROR_SUCCESS) {
+        if (out_err) *out_err = ERROR_PRIVILEGE_NOT_HELD;
+        CloseHandle(token);
+        return NULL;
+    }
+    CloseHandle(token);
+
+    lp = GetLargePageMinimum();  /* 0 => no large-page support on this CPU/OS */
+    if (lp == 0) {
+        if (out_err) *out_err = ERROR_NOT_SUPPORTED;
+        return NULL;
+    }
+    rounded = ((size + (size_t)lp - 1) / (size_t)lp) * (size_t)lp;
+    p = VirtualAlloc(NULL, rounded, MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES,
+                     PAGE_READWRITE);
+    if (!p && out_err) *out_err = GetLastError();
+    return p;
+}
+#endif
+
+/* Free a chase buffer allocated either by alloc_large_pages (Windows large
+ * pages -> VirtualFree) or aligned_alloc_portable (-> matching aligned free). */
+static void probe_buffer_free(void *p, int hugepages) {
+#if defined(_WIN32)
+    if (hugepages) {
+        if (p) VirtualFree(p, 0, MEM_RELEASE);
+        return;
+    }
+#else
+    (void)hugepages;
+#endif
+    aligned_free_portable(p);
+}
+
 /*
  * calibrate() -> nanoseconds per hardware tick.
  * Counts ticks over ~50 ms of monotonic wall-clock time. Correct on every
@@ -174,18 +253,23 @@ static PyObject *calibrate(PyObject *self, PyObject *args) {
 }
 
 /*
- * measure_wss(size_bytes, stride, hops, repeats, seed) -> min ticks-per-access.
+ * measure_wss(size_bytes, stride, hops, repeats, seed[, huge_pages])
+ *   -> min ticks-per-access.
  * The caller converts ticks to ns using calibrate(). Returns the MINIMUM over
  * repeats: interference can only add time, so the fastest run is the best
- * estimate of true latency (standard lmbench practice).
+ * estimate of true latency (standard lmbench practice). The optional
+ * `huge_pages` flag (default 0) requests a 2 MiB large-page buffer on Windows
+ * to suppress page-walk latency; it falls back silently-but-for-one-warning to
+ * ordinary pages if the privilege is unavailable (see alloc_large_pages).
  */
 static PyObject *measure_wss(PyObject *self, PyObject *args) {
     (void)self;
     Py_ssize_t size_bytes, stride, hops, repeats;
     unsigned long long seed;
+    int huge_pages = 0;  /* optional 6th arg; default off keeps 5-arg callers valid */
 
-    if (!PyArg_ParseTuple(args, "nnnnK", &size_bytes, &stride, &hops,
-                          &repeats, &seed)) {
+    if (!PyArg_ParseTuple(args, "nnnnK|p", &size_bytes, &stride, &hops,
+                          &repeats, &seed, &huge_pages)) {
         return NULL;
     }
     if (stride <= 0 || size_bytes < stride || hops <= 0 || repeats <= 0) {
@@ -204,11 +288,43 @@ static PyObject *measure_wss(PyObject *self, PyObject *args) {
 
     size_t nslots = (size_t)(size_bytes / stride);
     if (nslots < 2) nslots = 2;
+    size_t alloc_bytes = nslots * (size_t)stride;
 
-    char *base = (char *)aligned_alloc_portable(nslots * (size_t)stride);
+    /* Allocate the chase buffer. When huge pages are requested we try 2 MiB
+     * large pages first (Windows only) and fall back -- with a one-time warning
+     * -- to the ordinary page-aligned allocation on any failure, so a missing
+     * privilege degrades gracefully instead of crashing. `used_hugepages`
+     * selects the matching deallocator. */
+    int used_hugepages = 0;
+    char *base = NULL;
+#if defined(_WIN32)
+    if (huge_pages) {
+        DWORD hp_err = 0;
+        base = (char *)alloc_large_pages(alloc_bytes, &hp_err);
+        if (base) {
+            used_hugepages = 1;
+        } else {
+            static int warned = 0;
+            if (!warned) {
+                warned = 1;
+                fprintf(stderr,
+                        "[autoecho] 2 MiB large-page allocation unavailable "
+                        "(error %lu); falling back to default 4 KiB pages. Grant "
+                        "'Lock pages in memory' (secpol.msc) to this account and "
+                        "run elevated to enable huge pages.\n",
+                        (unsigned long)hp_err);
+                fflush(stderr);
+            }
+        }
+    }
+#else
+    (void)huge_pages;  /* large pages are gated to Windows; ARM/macOS unaffected */
+#endif
+    if (!base) base = (char *)aligned_alloc_portable(alloc_bytes);
+
     size_t *order = (size_t *)malloc(nslots * sizeof(size_t));
     if (!base || !order) {
-        aligned_free_portable(base);
+        probe_buffer_free(base, used_hugepages);
         free(order);
         return PyErr_NoMemory();
     }
@@ -256,14 +372,41 @@ static PyObject *measure_wss(PyObject *self, PyObject *args) {
     }
     Py_END_ALLOW_THREADS
 
-    aligned_free_portable(base);
+    probe_buffer_free(base, used_hugepages);
     free(order);
     return PyFloat_FromDouble(best);
 }
 
+/*
+ * hugepages_available() -> bool.
+ * True iff a 2 MiB large-page allocation actually succeeds right now (privilege
+ * held + elevated + OS support). Lets the Python layer record honest provenance
+ * -- whether a run really used large pages -- instead of assuming the request
+ * took effect. Allocates and immediately frees a single large page as the probe.
+ */
+static PyObject *hugepages_available(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+#if defined(_WIN32)
+    DWORD err = 0;
+    void *p = alloc_large_pages(1, &err);  /* rounds up to one 2 MiB page */
+    if (p) {
+        VirtualFree(p, 0, MEM_RELEASE);
+        Py_RETURN_TRUE;
+    }
+    Py_RETURN_FALSE;
+#else
+    Py_RETURN_FALSE;  /* large-page path is gated to Windows */
+#endif
+}
+
 static PyMethodDef WssMethods[] = {
+    {"hugepages_available", hugepages_available, METH_NOARGS,
+     "True iff a 2 MiB large-page allocation succeeds now (privilege + elevation)."},
     {"measure_wss", measure_wss, METH_VARARGS,
-     "Measure min ticks-per-access for a pointer chase over a working-set size."},
+     "measure_wss(size, stride, hops, repeats, seed[, huge_pages]) -> min "
+     "ticks-per-access for a pointer chase over a working-set size. huge_pages=1 "
+     "requests a 2 MiB large-page buffer (Windows; graceful fallback)."},
     {"calibrate", calibrate, METH_NOARGS,
      "Measure nanoseconds per hardware tick against the OS monotonic clock."},
     {NULL, NULL, 0, NULL}};

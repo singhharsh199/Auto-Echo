@@ -36,13 +36,34 @@ def run_wss(args):
     machine = get_machine_label()
     print(f"Machine: {machine}")
 
+    # Huge pages requested via --huge-pages OR env var AUTOECHO_HUGEPAGES=1. We
+    # verify they ACTUALLY apply (privilege held + elevated) before claiming them,
+    # so the report never over-states the allocation used (honest provenance).
+    want_huge = bool(getattr(args, "huge_pages", False)) or \
+        os.environ.get("AUTOECHO_HUGEPAGES", "") == "1"
+    use_huge = want_huge
+    if want_huge:
+        try:
+            from autoecho.wss import wss_probe_c
+            use_huge = bool(wss_probe_c.hugepages_available())
+        except Exception:
+            use_huge = False
+        if not use_huge:
+            print("  [warn] huge pages requested but unavailable (needs 'Lock "
+                  "pages in memory' + an elevated process); using 4 KiB pages.")
+    pages_note = ("2 MiB large pages" if use_huge else
+                  ("default 4 KiB pages (huge pages requested but unavailable)"
+                   if want_huge else "default 4 KiB pages"))
+    print(f"Allocation: {pages_note}")
+
     print(f"\n[1/5] Running {args.runs} pointer-chase sweep(s) up to {args.max_mb} MiB "
           f"({args.repeats} repeats/size, seed={args.seed})...")
     sweeps = []
     for i in range(args.runs):
         # Vary the seed per run so repeat sweeps are independent (stability signal).
         sweeps.append(sweep(max_bytes=args.max_mb * 1024 * 1024, hops=args.hops,
-                            repeats=args.repeats, seed=args.seed + i))
+                            repeats=args.repeats, seed=args.seed + i,
+                            huge_pages=use_huge))
     curve = sweeps[0]  # representative curve for the headline figures
 
     print("[2/5] Discovering memory levels (change-point + clustering)...")
@@ -87,7 +108,8 @@ def run_wss(args):
         allc.to_csv(os.path.join(args.output_dir, "wss_curves_all.csv"), index=False)
     generate_wss_report(levels, result, val,
                         os.path.join(args.output_dir, "validation_report.md"),
-                        comparison=comparison, capacity_acc=cap_acc, machine=machine)
+                        comparison=comparison, capacity_acc=cap_acc, machine=machine,
+                        pages=pages_note)
     plot_memory_mountain(curve, levels,
                          os.path.join(args.output_dir, "memory_mountain.png"),
                          sweeps=sweeps, machine=machine)
@@ -170,6 +192,13 @@ def main():
                              "omit for automatic model selection (K-Means+Silhouette "
                              "count, change-point localisation)")
     parser.add_argument("--runs", type=_positive_int, default=1, help="independent sweeps for stability/error-bar evaluation")
+    parser.add_argument("--huge-pages", action="store_true",
+                        help="allocate the pointer-chase buffer with 2 MiB large "
+                             "pages (Windows; needs 'Lock pages in memory' + an "
+                             "elevated process) to suppress page-walk latency and "
+                             "unmask a TLB-masked L3. Also enabled by env var "
+                             "AUTOECHO_HUGEPAGES=1; falls back to 4 KiB pages if "
+                             "the privilege is unavailable.")
     # Legacy sample options
     parser.add_argument("--samples", type=_positive_int, default=50000)
     parser.add_argument("--mode", type=int, default=0, choices=[0, 1])

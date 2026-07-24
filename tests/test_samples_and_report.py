@@ -23,7 +23,9 @@ def test_wss_report_generation(make_curve, tmp_path):
     generate_wss_report(result["levels"], result, val, str(out))
 
     assert out.exists()
-    text = out.read_text()
+    # Reports are written as UTF-8 (they contain ✅/❌ and en-dashes); read them
+    # back the same way so the test does not fail under Windows' cp1252 default.
+    text = out.read_text(encoding="utf-8")
     assert "Discovered Memory Hierarchy" in text
     assert "Validation Against Hardware Ground Truth" in text
     assert len(result["levels"]) >= 2  # a clean multi-tier curve yields >=2 levels
@@ -51,7 +53,7 @@ def test_legacy_samples_pipeline(tmp_path):
 
     out = tmp_path / "baseline.md"
     generate_report(stats, str(out))
-    assert out.exists() and "Memory Hierarchy" in out.read_text()
+    assert out.exists() and "Memory Hierarchy" in out.read_text(encoding="utf-8")
 
 
 def test_preprocess_pipeline_runs():

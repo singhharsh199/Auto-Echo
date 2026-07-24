@@ -69,9 +69,15 @@ def sweep(
     repeats: int = DEFAULT_REPEATS,
     seed: int = DEFAULT_SEED,
     stride: int | None = None,
+    huge_pages: bool = False,
 ) -> pd.DataFrame:
     """Run the full working-set-size sweep.
 
+    :param huge_pages: if True, request a 2 MiB large-page chase buffer (Windows
+        only; the probe falls back to ordinary 4 KiB pages with a one-line
+        warning if ``SeLockMemoryPrivilege`` is unavailable). Large pages
+        suppress page-walk latency so a large shared L3 is not masked by the TLB
+        (see ``wss_probe.c``). Off by default; ARM/macOS are unaffected.
     :returns: DataFrame with columns ``wss_bytes``, ``wss_kib``,
         ``latency_ns`` (minimum-over-repeats average access latency).
     """
@@ -91,7 +97,8 @@ def sweep(
         # Amortise more for larger sets; cap to bound total runtime.
         nslots = max(2, size // line)
         this_hops = int(min(max(hops, nslots * HOPS_PER_SLOT), MAX_HOPS))
-        ticks = wss_probe_c.measure_wss(size, int(line), this_hops, repeats, seed)
+        ticks = wss_probe_c.measure_wss(size, int(line), this_hops, repeats, seed,
+                                        bool(huge_pages))
         rows.append(
             {
                 "wss_bytes": size,

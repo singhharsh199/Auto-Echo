@@ -126,11 +126,18 @@ def plot_model_selection(analysis, output_path=None, machine=None):
 
 
 def generate_wss_report(levels, analysis, validation, output_path=None,
-                        comparison=None, capacity_acc=None, machine=None):
-    """Generate the Markdown validation report for the WSS methodology."""
+                        comparison=None, capacity_acc=None, machine=None,
+                        pages=None):
+    """Generate the Markdown validation report for the WSS methodology.
+
+    :param pages: optional allocation-provenance note (e.g. '2 MiB large pages'
+        vs 'default 4 KiB pages') recorded so a huge-page run is distinguishable
+        from a 4 KiB-page run in the committed artifact."""
     r = "# Auto-Echo Validation Report\n\n"
     if machine:
         r += f"**Machine:** {machine}\n\n"
+    if pages:
+        r += f"**Chase-buffer allocation:** {pages}\n\n"
     r += "## 1. Discovered Memory Hierarchy\n\n"
     r += "| Level | Inferred capacity | Median latency | p5–p95 latency | WSS range | Points |\n"
     r += "|---|---|---|---|---|---|\n"
