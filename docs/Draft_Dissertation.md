@@ -428,7 +428,7 @@ as designed. This is the framework's first execution on a second, independent IS
 and it both **substantiates and qualifies** the architecture-agnostic claim.
 
 **The two innermost caches are recovered accurately and stably.** The pointer-chase
-curve (Fig. 8) has a flat **1.6 ns L1 plateau to ~48 KiB** and a flat **~5 ns L2
+curve (Fig. 7) has a flat **1.6 ns L1 plateau to ~48 KiB** and a flat **~5 ns L2
 plateau to ~1.25 MiB**, whose plateau points vary only ~5–15 % across the three
 sweeps. Both land essentially on the documented per-core Raptor Lake figures
 (48 KiB L1d; 1.25 MiB L2 on this SKU). The *same* unsupervised code path that
@@ -462,14 +462,14 @@ the M1. The representative sweep is segmented into four bands, but across the th
 sweeps the estimators disagree and vary run to run: K-Means + Silhouette gives a
 modal count of **2** (mean 2.67), the independent change-point cost-knee and the
 Elbow method give **2**, DBSCAN a modal **3**, and GMM a modal **5**. The min–max
-band in Fig. 8 shows why — run-to-run latency spread reaches several hundred per
+band in Fig. 7 shows why — run-to-run latency spread reaches several hundred per
 cent in the 1.3–4 MiB TLB-transition region, so the "fast vs slow" split (L1+L2 vs
 memory) is the only partition every run agrees on. This is the closely-spaced,
 noisy-level regime in which 1-D Silhouette is known to under-count (Literature
 Review §5), and it is why the clean, unanimous three-level agreement seen on the
 M1 does **not** reproduce here.
 
-**Table 6: Model selection — Elbow and Silhouette *disagree* (Fig. 9).** Unlike the
+**Table 6: Model selection — Elbow and Silhouette *disagree* (Fig. 8).** Unlike the
 M1 (Table 2, where both criteria select k = 3), on the representative Intel sweep the
 two automatic model-selection criteria choose **different** cluster counts:
 
@@ -480,7 +480,7 @@ two automatic model-selection criteria choose **different** cluster counts:
 
 The K-Means inertia elbows at **k = 2** — the fast-vs-slow (L1/L2 vs. memory) split
 every run agrees on — whereas the Silhouette score peaks at **k = 4**. This
-disagreement, visualised in Fig. 9, is the model-selection form of the unstable x86
+disagreement, visualised in Fig. 8, is the model-selection form of the unstable x86
 level count quantified in Table 7, and the direct contrast with the M1's unanimous
 agreement (Table 2 / Fig. 6).
 
@@ -532,16 +532,16 @@ false positive; F1 = 0.67, mean absolute capacity error 5.1 %). This also closes
 real portability gap — macOS and Linux already read per-core caches via
 `sysctl`/`sysfs`, and Windows now does too.
 
-![Auto-Echo memory latency curve — Intel (Fig. 8)](../data/intel_i5_13450hx/memory_mountain.png)  
-*Fig. 8. Pointer-chase latency vs. working-set size on the Intel i5-13450HX
+![Auto-Echo memory latency curve — Intel (Fig. 7)](../data/intel_i5_13450hx/memory_mountain.png)  
+*Fig. 7. Pointer-chase latency vs. working-set size on the Intel i5-13450HX
 performance core (minimum over three sweeps; the light band is the min–max spread).
 L1 (~48 KiB) and L2 (~1.25 MiB) are cleanly and stably resolved; beyond ~1.3 MiB
 TLB/page-walk latency dominates and the curve saturates at ~143 ns before the
 20 MiB L3 can appear, so the third shaded band is a TLB-transition region rather
 than the L3 cache.*
 
-![Model selection — Intel (Fig. 9)](../data/intel_i5_13450hx/model_selection.png)  
-*Fig. 9. Automatic model selection on the Intel i5-13450HX: the K-Means inertia elbow
+![Model selection — Intel (Fig. 8)](../data/intel_i5_13450hx/model_selection.png)  
+*Fig. 8. Automatic model selection on the Intel i5-13450HX: the K-Means inertia elbow
 selects k = 2 while the Silhouette score peaks at k = 4 — the two criteria
 **disagree**, the model-selection signature of the unstable x86 level count. Contrast
 Fig. 6, where they agree at k = 3 on the M1.*
@@ -579,12 +579,12 @@ with 4 KiB pages, TLB/page-walk latency masks the 20 MiB L3 (§6.3), so the deep
 hierarchy is not separable without a huge-page control. Second, the level *count*
 is stable and unanimous on the M1 but **unstable** on the Intel part (estimators
 ranged 2–5 across sweeps), so "one counter is correct on every architecture" is
-now known to be too strong. The synthetic curves (Fig. 7) should therefore be read
+now known to be too strong. The synthetic curves (Fig. 9) should therefore be read
 as *method verification* — showing the counting machinery adapts to a given
 staircase shape — not as evidence about real x86 behaviour, which §6.3 supersedes.
 
-![One method, many machines (Fig. 7)](../data/diagram_crossplatform.png)
-*Fig. 7. Method verification on **synthetic** staircase curves: the automatic
+![One method, many machines (Fig. 9)](../data/diagram_crossplatform.png)
+*Fig. 9. Method verification on **synthetic** staircase curves: the automatic
 counter adapts its level count to the input shape — four levels on an idealised
 x86 profile, three on an M1-shaped profile, two on a flattened VM profile. These
 are modelled curves, not measurements; the real Intel result (§6.3) exhibits TLB
