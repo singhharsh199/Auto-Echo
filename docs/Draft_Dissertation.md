@@ -300,6 +300,13 @@ The Windows path now reads true *per-core* sizes for CPU 0 — the legacy
 (L1 = 6 × 48 KiB) — so the Intel L1/L2/L3 columns above are the per-core figures the
 single-core probe actually sees (§6.3).*
 
+*The **Status** column uses a deliberate three-tier vocabulary. **Validated**: every
+documented cache was recovered and matched OS ground truth (the M1 — 2/2, 100%).
+**Measured**: the tool ran and recovered real data but did not fully validate (the
+Intel — L1 and L2 matched, but the 20 MiB L3 is TLB-masked and the automatic level
+count is unstable). **To be measured**: not yet run. The M1/Intel differences that
+follow in §6.2–§6.3 track this convention and are deliberate, not omissions.*
+
 ### 6.2 Apple M1 (Firestorm P-core) — validated
 The WSS probe produces a clean, well-separated latency curve (Fig. 5). Automatic
 model selection (Silhouette count + change-point localisation) and validation
@@ -462,7 +469,22 @@ noisy-level regime in which 1-D Silhouette is known to under-count (Literature
 Review §5), and it is why the clean, unanimous three-level agreement seen on the
 M1 does **not** reproduce here.
 
-**Table 6: Level-count estimators — comparison and stability (Intel i5-13450HX,
+**Table 6: Model selection — Elbow and Silhouette *disagree* (Fig. 9).** Unlike the
+M1 (Table 2, where both criteria select k = 3), on the representative Intel sweep the
+two automatic model-selection criteria choose **different** cluster counts:
+
+| Criterion | Selected k |
+| :--- | :---: |
+| K-Means inertia (Elbow) | 2 |
+| Silhouette score | 4 |
+
+The K-Means inertia elbows at **k = 2** — the fast-vs-slow (L1/L2 vs. memory) split
+every run agrees on — whereas the Silhouette score peaks at **k = 4**. This
+disagreement, visualised in Fig. 9, is the model-selection form of the unstable x86
+level count quantified in Table 7, and the direct contrast with the M1's unanimous
+agreement (Table 2 / Fig. 6).
+
+**Table 7: Level-count estimators — comparison and stability (Intel i5-13450HX,
 3 sweeps; expected 4).** Compare with the M1's Table 3, where all five estimators
 agreed at three with zero variance; here *no* estimator is both accurate and
 stable.
@@ -481,11 +503,11 @@ and Elbow) both sit at two. This is the quantitative form of "L1 and L2 recovere
 deeper structure not reliably counted" — and the direct empirical contrast with
 the M1, where K-Means + Silhouette was the accurate, stable winner.
 
-**Table 7: Change-point level count vs. manual PELT penalty (Intel, representative
+**Table 8: Change-point level count vs. manual PELT penalty (Intel, representative
 sweep).** Unlike the M1 (Table 4, where the count slid from six to three as the
 penalty rose), the Intel min-curve segments into **four** bands at *every* penalty:
 the L1 / L2 / TLB-transition / DRAM shape is robustly present in the representative
-curve, so it is the *cross-sweep* Silhouette count (Table 6), not the penalty, that
+curve, so it is the *cross-sweep* Silhouette count (Table 7), not the penalty, that
 is unstable.
 
 | Penalty | 1 | 2 | 3 | 4 | 6 | 8 | 10 |
@@ -518,12 +540,18 @@ TLB/page-walk latency dominates and the curve saturates at ~143 ns before the
 20 MiB L3 can appear, so the third shaded band is a TLB-transition region rather
 than the L3 cache.*
 
+![Model selection — Intel (Fig. 9)](../data/intel_i5_13450hx/model_selection.png)  
+*Fig. 9. Automatic model selection on the Intel i5-13450HX: the K-Means inertia elbow
+selects k = 2 while the Silhouette score peaks at k = 4 — the two criteria
+**disagree**, the model-selection signature of the unstable x86 level count. Contrast
+Fig. 6, where they agree at k = 3 on the M1.*
+
 ### 6.4 Apple M5 (ARM64) — *to be measured*
 An Apple M5 part is a newer Apple-silicon generation; running Auto-Echo on it
 would add a second, independent ARM64 data point across CPU generations and a
 further test of architecture-agnosticism, complementing the M1 (§6.2).
 
-**Table 8: Discovered hierarchy vs. ground truth (Apple M5 — placeholder).**
+**Table 9: Discovered hierarchy vs. ground truth (Apple M5 — placeholder).**
 
 | Level | Detected capacity | Median latency | p5–p95 | Ground truth | Error |
 | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -572,14 +600,14 @@ effects the synthetic x86 profile omits and should be read in preference to it.*
 
 With two real curves now in hand, a combined cross-machine overlay
 (`compare_curves.py`) plots the M1's 128 KiB / 12 MiB knees against the Intel
-core's 48 KiB / 1.25 MiB knees on one log–log axis (Fig. 9). Both are flat in L1;
+core's 48 KiB / 1.25 MiB knees on one log–log axis (Fig. 10). Both are flat in L1;
 the M1 then carries a single high **L2+SLC** shelf (~9 ns) where the Intel shows a
 distinct **L1→L2→L3** staircase; both climb to a ~130–145 ns DRAM plateau. This is
 direct visual evidence for architecture-agnostic recovery of the inner hierarchy
 across ARM64 and x86-64. The Apple M5 curve would extend it to three machines.
 
-![Cross-machine latency overlay (Fig. 9)](../data/compare_mountain.png)
-*Fig. 9. Auto-Echo latency curves for the Apple M1 (ARM64) and Intel i5-13450HX
+![Cross-machine latency overlay (Fig. 10)](../data/compare_mountain.png)
+*Fig. 10. Auto-Echo latency curves for the Apple M1 (ARM64) and Intel i5-13450HX
 (x86-64) on one axis, each machine's detected cache boundaries marked (dotted).
 L1 and L2 are recovered on both ISAs; the Intel deep region is compressed by 4 KiB
 page-walk (TLB) latency (§6.3).*

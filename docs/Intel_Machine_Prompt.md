@@ -1,159 +1,130 @@
-# Prompt for Claude Code — Intel i5-13450HX (Windows) machine
+# Prompt for Claude Code — VALIDATE the Intel i5-13450HX results (benchmarked to the Apple M1)
 
-> **How to use:** on the Intel machine, `git pull`, open Claude Code in the repo root,
-> and paste everything from the `─── PROMPT ───` line down. It is written to be handed
-> to the AI verbatim. Tasks are ordered by value; do them in order and **stop to report
-> if a hardware/privilege blocker appears — never fabricate a measurement.**
+> **How to use:** on the Intel machine, `git pull`, open Claude Code in the repo root, and
+> paste everything from `─── PROMPT ───` down. The Apple M1 is the fully-validated reference;
+> the goal is to bring the Intel result up to that same standard. **Never fabricate a
+> measurement, and never relabel a result "validated" without the evidence** (see the
+> Integrity Rule).
 
 ---
 
 ─── PROMPT ───
 
-You are working on **Auto-Echo**, an MSc dissertation project (QMUL) that discovers a
-CPU's cache hierarchy (L1/L2/L3/DRAM) from user space using a working-set-size (WSS)
-pointer-chase latency sweep plus unsupervised level discovery, validated against
-OS-reported ground truth. The repo is set up. Key files: probe
-`src/autoecho/wss/wss_probe.c` (+ wrapper `src/autoecho/wss/__init__.py`), analysis
-`src/autoecho/analysis.py`, ground-truth `src/autoecho/validation.py`, CLI
-`python -m autoecho`.
+You are working on **Auto-Echo** (MSc dissertation, QMUL): a tool that discovers a CPU's
+cache hierarchy (L1/L2/L3/DRAM) from user space via a working-set-size (WSS) pointer-chase
+latency sweep plus unsupervised level discovery, validated against OS ground truth. Key
+files: probe `src/autoecho/wss/wss_probe.c` (+ wrapper `src/autoecho/wss/__init__.py`),
+analysis `src/autoecho/analysis.py`, ground truth `src/autoecho/validation.py`, CLI
+`python -m autoecho`. Machine: **Intel Core i5-13450HX** (Raptor Lake, 6 P + 4 E cores),
+Windows, x86-64; per-core caches L1d **48 KiB**, L2 **~1.25–2 MiB/core**, L3 **~20 MiB
+shared**, 64-byte lines; the probe pins to CPU 0.
 
-**This machine:** Intel Core i5-13450HX (Raptor Lake, 6 P-cores + 4 E-cores), Windows,
-x86-64. Documented **per-core** caches: L1d **48 KiB**, L2 **~1.25–2 MiB/core**, L3
-**~20 MiB shared**, 64-byte lines. The probe pins to CPU 0 (a P-core).
+## YOUR GOAL: validate the Intel results — move the Intel machine from "measured" to "validated"
 
-**Rules you must respect:**
-- The macOS/Apple-M1 path is validated and must NOT regress. Every Windows/x86-specific
-  change must be **gated** (Windows-only branch, or behind a flag/env var).
-- After any code change, run `pytest -q` and keep it green (**29 passed** once the C
-  extension is built).
-- Two open issues this machine exists to fix: (a) with default 4 KiB pages, page-walk
-  latency saturates the curve at ~143 ns by ~4 MiB and **masks the 20 MiB L3**; (b) the
-  Windows ground-truth path reads **per-socket aggregate** cache sizes
-  (`Win32_CacheMemory`), so validation reads **0%** despite correct L1/L2 knees.
-- The pipeline already reports **recall + precision** and supports
-  `--capacity-method {edge,onset,hybrid}` (default `edge`). You do not need to change
-  the analysis; you are supplying better measurements and better ground truth.
+The framework is fully **validated** on an Apple M1 — that is the standard you must reach.
+The dissertation deliberately grades its machines:
 
----
+- **"validated"** (Apple M1): every documented cache matched OS ground truth → **100% recall,
+  100% precision (2/2)**, and all five level-count estimators **agree** (unanimous, std 0).
+- **"measured"** (Intel, current): the tool ran and recovered real data, but only **L1 + L2
+  (2/3 = 66.7%)** — the **20 MiB L3 is masked by 4 KiB-page TLB/page-walk latency** — and the
+  level count is **unstable** (estimators range 2–5 across sweeps). It is honestly *not*
+  called "validated" because a documented cache was not recovered.
 
-## Task 0 — Build, test, verify label
+**What separates the two is exactly one thing: the masked L3.** Unmasking it with **2 MiB
+large pages** is the single action that can earn the Intel result the "validated" label — and
+the dissertation predicts large pages will *also* stabilise the level count. The large-page
+code is already written (`--huge-pages` / `AUTOECHO_HUGEPAGES=1`, `hugepages_available()`,
+graceful fallback); what remains is the **privileged run** and, only if it succeeds, the relabel.
 
-1. `python -m venv .venv`, activate, `pip install -e .` (needs **MSVC C++ Build Tools**).
-2. `pytest -q` → expect **29 passed**.
-3. `python -m autoecho --method wss --max-mb 128 --runs 1 --output-dir data/_scratch`
-   and confirm the report's `**Machine:**` line reads **`Intel Core i5-13450HX (x86-64, Windows)`**.
-   If it shows the raw `Intel64 Family 6 Model 183 …` string instead, the PowerShell-CIM
-   brand query failed — report the exact error before continuing.
+### ⚠️ INTEGRITY RULE — read twice
+Upgrade the Intel status to **"validated" ONLY IF** the huge-page run *actually* produces:
+(a) provenance "**2 MiB large pages**" in the report (huge pages truly took effect), **and**
+(b) a real **~20 MiB L3 plateau**, giving **recall 3/3 = 100%** with the L3 within a factor of two.
+If the L3 does **not** resolve, or admin rights are unavailable, the Intel result **stays
+"measured"** — record exactly what you observed and change no labels. **Never relabel on
+faith; the honest "measured" is worth more than an unearned "validated."**
 
-Report the pytest count and the machine label, then proceed.
+## The M1 benchmark — physical anchors that must hold on the Intel run too
+- Build: `pip install -e .` clean (needs **MSVC C++ Build Tools**). Tests: `pytest` →
+  **~30 passed** on Windows (the per-core-GT test that skips on macOS runs here).
+- Label: **`13th Gen Intel Core i5-13450HX (x86-64, Windows)`**.
+- L1 ≈ **1.6 ns**, DRAM ≈ **143 ns**, monotonic staircase. **If L1 < 0.3 ns or DRAM < 15 ns,
+  the tick→ns calibration is broken — stop and report.**
 
----
+## Already done and committed — verify intact, do NOT rebuild
+Per-core ground truth (`GetLogicalProcessorInformationEx`) → **0% → 66.7%** (L1 +16%, L2 −1.5%
+matched; the 3.5 MiB "L3" correctly a false positive); clflush baseline; regenerated artifacts
++ cross-machine overlay (Fig. 10); dissertation §6.3/§6.5/§6.6. **Rule:** the M1/macOS/ARM path
+is the validated benchmark and must NOT regress — gate every Windows/x86 change; keep `pytest`
+green.
 
-## Task 1 — Unmask the L3 with huge (large) pages  ★ highest value
+## REQUIRED ACTIONS (in order)
 
-**Goal:** allocate the pointer-chase buffer with **2 MiB large pages** so page-walk cost
-is suppressed and the ~20 MiB L3 becomes a visible 4th band.
+**0. Reproduce the benchmark build.** venv + `pip install -e .`; `pytest -q` (~30 passed);
+`python -m autoecho --method wss --max-mb 128 --runs 1 --output-dir data/_scratch` — confirm
+the label and L1 ≈ 1.6 ns / DRAM ≈ 143 ns. Report these.
 
-**Implement (gated, default-off):** in `wss_probe.c`, add a large-page allocation path
-used only when requested — env var `AUTOECHO_HUGEPAGES=1` **or** a `--huge-pages` CLI
-flag threaded `__main__.py` → `sweep()` → `measure_wss`. Keep `aligned_alloc_portable`
-as default. Windows large-page allocation:
-1. Enable **`SeLockMemoryPrivilege`**: `OpenProcessToken` + `LookupPrivilegeValue(NULL, SE_LOCK_MEMORY_NAME, …)` + `AdjustTokenPrivileges`.
-2. Round size up to a multiple of `GetLargePageMinimum()` (≈2 MiB).
-3. `VirtualAlloc(NULL, rounded, MEM_RESERVE|MEM_COMMIT|MEM_LARGE_PAGES, PAGE_READWRITE)`; free with `VirtualFree(p, 0, MEM_RELEASE)`.
-4. **Graceful fallback:** on `ERROR_PRIVILEGE_NOT_HELD` (1314) or if the privilege isn't
-   assigned, fall back to the normal allocation and print a one-line warning. Never crash.
+**1. Grant + prove the privilege** (needs a Windows admin, ~15 min). `secpol.msc` → *Local
+Policies* → *User Rights Assignment* → **Lock pages in memory** → add your user → **log out
+and back in**. Open an **elevated** shell, `cd` repo, activate venv. Prove it:
+`python -c "import autoecho.wss_probe_c as w; print(w.hugepages_available())"` → must print
+**`True`**. If `False`, the right isn't active — recheck the grant + elevation; do not proceed
+to step 2's validation claim.
 
-**Privilege setup (one-time, needs a Windows admin):** `secpol.msc` → *Local Policies* →
-*User Rights Assignment* → **Lock pages in memory** → add this user → **log out/in**; run
-the process **elevated**. If you cannot get admin rights, say so, skip the run, and
-record Task 1 as *blocked on privilege* — do not fake it.
+**2. Run the validating sweep:**
+`python -m autoecho --method wss --max-mb 512 --runs 3 --huge-pages --output-dir data/intel_i5_13450hx`
 
-**Run & compare:** `set AUTOECHO_HUGEPAGES=1` (or `--huge-pages`), then
-`python -m autoecho --method wss --max-mb 512 --runs 3 --output-dir data/intel_hugepage`.
-Compare to the 4 KiB-page run: does a **4th plateau near ~20 MiB** now appear? Report the
-detected levels + capacities for both. Success = L1/L2/**L3**/DRAM with L3 ≈ 20 MiB.
+**3. Check the validation criterion and report each item explicitly:**
+- [ ] Report's `Chase-buffer allocation:` line = **"2 MiB large pages"**.
+- [ ] A **4th plateau near ~20 MiB** (the L3) is present in the curve.
+- [ ] **Recall = 3/3 = 100%**; L3 detected within a factor of two of 20 MiB.
+- [ ] Level count now **stable** across the 3 sweeps (report the agreement vs the old 2–5).
+- [ ] L1 ≈ 1.6 ns and DRAM ≈ 143 ns still hold.
 
----
+**4a. IF the criterion is met → the Intel is VALIDATED. Relabel (only now):**
+- §6.1 test-machine table, Status cell: `measured (L1/L2; L3 masked by TLB)` → **`validated`**.
+- §6.3 heading: `Intel x86 (Raptor Lake P-core) — measured` → `— validated`.
+- §6.1 intro line "Two real machines are now measured" and the §6.5 comparison table
+  (`2/3 (L1, L2)` → `3/3 documented`; `L3 masked by TLB` → the measured L3; count stability →
+  the new value).
+- Abstract + §8 conclusion: revise the "masks the 20 MiB L3 / honest limit / measured"
+  language to state that the **2 MiB huge-page control resolves the full L1/L2/L3/DRAM
+  hierarchy on x86, validated** — while **explicitly recording the provenance**: this L3
+  result requires huge pages and is not the default 4 KiB-page behaviour (keep that honest).
+- **Model-selection figure (Fig. 9) + Table 6:** these currently show the estimators
+  *disagreeing* (Elbow k = 2 vs Silhouette k = 4) — the visual proof of the unstable count.
+  If huge pages **stabilise** the count (estimators now agree), the `--huge-pages` run
+  regenerates `data/intel_i5_13450hx/model_selection.png`; update **Fig. 9**'s caption and
+  **Table 6** from "disagree" to the new agreement (mirroring the M1's Fig. 6 / Table 2). If
+  the count stays unstable even with the L3 resolved, leave Fig. 9 / Table 6 as "disagree".
 
-## Task 2 — Per-core Windows ground truth
+**4b. IF the criterion is NOT met (L3 still masked, or blocked on admin):** leave every
+"measured" label untouched; add one sentence recording the huge-page attempt and its outcome.
+The dissertation remains honest and correct as-is.
 
-Replace the aggregate cache sizes with true per-core sizes. In
-`validation.py`, `get_ground_truth()` Windows branch: read caches via
-**`GetLogicalProcessorInformationEx(RelationCache, …)`** (kernel32) — cleanest via
-**ctypes** (no rebuild). Iterate `CACHE_RELATIONSHIP` records; keep `CacheData`/
-`CacheUnified` (drop `CacheInstruction`); use `Level` + `CacheSize` (these are per-cache,
-not summed) for the caches on CPU 0. Keep the old `Win32_CacheMemory` path as a labelled
-fallback. **Sanity:** expect L1 **49152**, L2 **≈1.25–2 MiB**, L3 **≈20–24 MiB**.
-Validation recall should jump from 0% to matching L1/L2 (and L3 if Task 1 unmasked it).
-Add a Windows-guarded test if practical; keep `pytest` green.
+**5. Refresh the cross-machine overlay** (Intel vs the M1 benchmark):
+`python compare_curves.py data/wss_curve.csv data/intel_i5_13450hx/wss_curve.csv --labels "Apple M1 (ARM64),Intel i5-13450HX (x86-64)" --annotate --output data/compare_mountain.png`
 
----
+**6. Verify the already-done work is intact** (per-core GT recall ≥ 66.7%; clflush baseline;
+`pytest` green).
 
-## Task 3 — Regenerate the committed Intel artifacts + the cross-machine overlay
+**7. Rebuild the PDF and commit.**
+`pandoc <tmp>.md -o Draft_Dissertation.pdf --pdf-engine=xelatex --toc --toc-depth=3 --resource-path=docs -V geometry:margin=1in -V mainfont="Cambria"` (if a `→`/`≈` glyph is missing, replace it with `$\rightarrow$`/`$\approx$` in a temp copy first).
 
-1. `python -m autoecho --method wss --max-mb 512 --runs 3 --output-dir data/intel_i5_13450hx`
-   (add `--huge-pages` if granted). Confirm the report shows the clean label, **Recall +
-   Precision**, and real per-core accuracy.
-2. Optionally report `--capacity-method hybrid` vs `edge` for the Intel caps (hybrid
-   falls back to edge on sloped plateaus, so expect them equal here).
-3. **Regenerate the cross-machine overlay** (the committed M1 curve `data/wss_curve.csv`
-   is in the repo):
-   `python compare_curves.py data/wss_curve.csv data/intel_i5_13450hx/wss_curve.csv --labels "Apple M1 (ARM64),Intel i5-13450HX (x86-64)" --annotate --output data/compare_mountain.png`
-   — this refreshes Fig. 9 with the new (huge-page) Intel curve.
-
----
-
-## Task 4 — `clflush` naive baseline (x86-only, fills a TBD cell)
-
-`python -m autoecho --method samples --mode 1 --samples 50000 --output-dir data/intel_baseline`.
-Record the result — it is *expected to fail* to resolve the hierarchy (write-before-read +
-timer-tick quantisation); that failure is the point, and fills the "Naive baseline (with
-`clflush`)" **TBD** cell in the §6.5 comparison table. (Cross-check reproducible via
-`python -m autoecho --method lof-check`.)
-
----
-
-## Task 4b — lmbench external cross-check (best done here / on WSL Linux)
-
-lmbench does **not** build on ARM macOS, so this external validation belongs on x86. On
-this machine (ideally via **WSL2 Ubuntu**): install/build lmbench (`sudo apt install
-lmbench` or build from source), then
-`lat_mem_rd -N 5 -t 512 128 > lmbench_raw.txt`, convert and overlay:
-`python crosscheck_lmbench.py lmbench_raw.txt -o data/intel_i5_13450hx/lmbench_curve.csv`
-then
+## (Optional) External corroboration the M1 lacks — lmbench
+Via **WSL2 Ubuntu**: build lmbench, `lat_mem_rd -N 5 -t 512 128 > lmbench_raw.txt`,
+`python crosscheck_lmbench.py lmbench_raw.txt -o data/intel_i5_13450hx/lmbench_curve.csv`,
 `python compare_curves.py data/intel_i5_13450hx/wss_curve.csv data/intel_i5_13450hx/lmbench_curve.csv --labels "Auto-Echo,lmbench lat_mem_rd" --annotate -o data/crosscheck_intel.png`.
-This validates the probe against trusted prior art on identical hardware — a strong
-evaluation figure. If lmbench can't be built, record that and move on.
+Auto-Echo's curve should overlay lmbench's within tolerance — external evidence the M1 run lacks.
 
----
+## Verification checklist
+- [ ] Build clean; `pytest` ~30 passed; label = `13th Gen Intel Core i5-13450HX (x86-64, Windows)`.
+- [ ] L1 ≈ 1.6 ns / DRAM ≈ 143 ns (timer calibration matches the M1 anchors).
+- [ ] Huge pages: provenance "2 MiB large pages"; ~20 MiB L3 present; **recall 3/3 = 100%** — OR clearly reported as *not achieved / blocked*, with labels left "measured".
+- [ ] "measured → validated" relabel done **only if** recall 3/3 was actually achieved; otherwise every label left honest.
+- [ ] Overlay refreshed; per-core GT + baseline intact; PDF rebuilt; committed.
 
-## Task 5 — Update the dissertation + rebuild PDF
-
-Edit `docs/Draft_Dissertation.md`:
-- **§6.3 (Intel)** — update the hierarchy table and text: if Task 1 unmasked the L3,
-  replace "L3 masked by TLB" with the measured L3; update accuracy from the per-core
-  ground truth (Task 2); add precision. If Task 4b ran, add the lmbench cross-check figure.
-- **§6.5** comparison table — update the Intel column (levels resolved, count stability,
-  caches matched, the naive-baseline cell).
-- Rebuild the PDF. On Windows use `-V mainfont="Cambria"` (covers `→`/`≈`); if a glyph is
-  still missing, use the build-copy trick — replace `→`/`≈` with `$\rightarrow$`/`$\approx$`
-  in a temp copy first:
-  `pandoc <tmp>.md -o Draft_Dissertation.pdf --pdf-engine=xelatex --toc --toc-depth=3 --resource-path=docs -V geometry:margin=1in -V mainfont="Cambria"`.
-
----
-
-## Verification checklist (report all)
-
-- [ ] `pytest` green (29+ passed) after every code change.
-- [ ] Machine label = `Intel Core i5-13450HX (x86-64, Windows)`.
-- [ ] Huge-page run: L3 (~20 MiB) plateau present? (yes / no / blocked-on-privilege — with the exact reason).
-- [ ] Per-core ground truth returns L1≈48 KiB, L2≈1.25–2 MiB, L3≈20–24 MiB.
-- [ ] Regenerated Intel report shows real Recall **and** Precision (not 0%).
-- [ ] Cross-machine overlay (Fig. 9) refreshed with the new Intel curve.
-- [ ] clflush baseline recorded; lmbench cross-check done (or recorded as blocked).
-- [ ] §6.3 / §6.5 updated; PDF rebuilt.
-
-Keep all Windows/x86-specific code paths gated so the macOS/ARM path is untouched.
+Keep the macOS/ARM benchmark path untouched throughout.
 
 ─── END PROMPT ───
