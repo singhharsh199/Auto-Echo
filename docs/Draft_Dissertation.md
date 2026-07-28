@@ -38,19 +38,27 @@ runtime-calibrated timing** and an **automatic, penalty-free level-discovery
 stage** in which unsupervised clustering (K-Means with Silhouette model selection,
 cross-checked by GMM and DBSCAN) *counts* the memory levels and change-point
 detection *localises* each cache's capacity. It builds and runs on Linux, Windows,
-and macOS across x86-64 and ARM64. On an Apple M1 (the platform validated to
-date), all of its estimators agree on **three levels** — L1, a merged L2/SLC
+and macOS across x86-64 and ARM64. On an Apple M1 (a performance core),
+all of its estimators agree on **three levels** — L1, a merged L2/SLC
 mid-band, and DRAM — recovering the documented L1 (128 KiB) and L2 (12 MiB)
 capacities to within 0.3 octaves (both OS-documented caches, 2/2, matched within
 a factor of two). Because the 12 MiB L2 and the OS-unreported ~8 MB System-Level
 Cache are so close, they resolve as one band; the finer split into a distinct L2
 and SLC appears only under a forced finer resolution and is reported as a
 candidate sub-structure. A second real machine — an Intel Core i5-13450HX
-(Raptor Lake) on Windows/x86-64 — corroborates the design: the same code path
-recovers its per-core L1 (~48 KiB) and L2 (~1.25 MiB), direct cross-architecture
-evidence. It also exposes an honest limit — with 4 KiB pages, TLB/page-walk
-latency masks the 20 MiB L3 and destabilises the automatic level count on x86 —
-motivating a huge-page control as the next step. The measurement technique descends from classical benchmarks such as
+(Raptor Lake) on Windows/x86-64 — corroborates the design across architectures.
+With the default 4 KiB pages the same code path recovers its per-core L1
+(~48 KiB) and L2 (~1.25 MiB) but TLB/page-walk latency masks the 20 MiB L3 and
+destabilises the automatic level count; enabling a **2 MiB huge-page control**
+removes the page-walk confounder and recovers the **full L1/L2/L3/DRAM
+hierarchy** — all three documented caches matched (**3/3, 100% recall and
+precision**, mean absolute capacity error 12.8% over three sweeps), with the
+productive K-Means + Silhouette counter now **stable at four levels**. This
+result is reported with its provenance: it requires the 2 MiB large-page
+allocation and is *not* the default 4 KiB-page behaviour, and full
+cross-estimator unanimity (seen on the M1) is still not reached — the
+model-selection criteria continue to disagree (K-Means inertia elbows at two,
+Silhouette peaks at four). The measurement technique descends from classical benchmarks such as
 lmbench's `lat_mem_rd`; the contribution is the fully unsupervised,
 self-validating, architecture-agnostic inference layer built on top of it.
 
@@ -103,8 +111,12 @@ labels or thresholds, and (iii) validates its output against known hardware.
    design that removes the last manual tuning knob.
 4. A self-validating evaluation against live OS ground truth, with empirical
    results on **two real ISAs** — an Apple M1 (three levels, unanimous across
-   estimators) and an Intel Raptor Lake core (L1/L2 recovered on x86; the L3 shown
-   to be masked by TLB effects and the count destabilised — a demonstrated limit).
+   estimators) and an Intel Raptor Lake core (L1/L2 recovered with default 4 KiB
+   pages; the **full L1/L2/L3/DRAM hierarchy** recovered under a 2 MiB huge-page
+   control that lifts the TLB/page-walk masking of the L3 — 3/3 documented caches
+   matched, 100% recall and precision — with the provenance recorded that this
+   depends on huge pages and the level count is stable but not cross-estimator
+   unanimous).
 5. A documented negative result (the naive probe) that motivates the design.
 
 ---
@@ -290,7 +302,7 @@ ARM64 and x86-64; an Apple M5 part (§6.4) remains outstanding.
 | Machine | Arch | Core probed | L1d | L2 | L3 | Line | Status |
 | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
 | Apple M1 | ARM64 | Firestorm P-core | 128 KiB | 12 MiB | — (8 MiB SLC) | 128 B | validated |
-| Intel Core i5-13450HX | x86-64 | Raptor Lake P-core | 48 KiB | 1.25 MiB/core | 20 MiB (shared) | 64 B | measured (L1/L2; L3 masked by TLB) |
+| Intel Core i5-13450HX | x86-64 | Raptor Lake P-core | 48 KiB | 1.25 MiB/core | 20 MiB (shared) | 64 B | validated (L1/L2/L3, 2 MiB huge pages) |
 | Apple M5 | ARM64 | *TBD* | *TBD* | *TBD* | *TBD* | *TBD* | to be measured |
 
 *Ground-truth cache sizes are read automatically from the OS at run time
@@ -301,11 +313,12 @@ The Windows path now reads true *per-core* sizes for CPU 0 — the legacy
 single-core probe actually sees (§6.3).*
 
 *The **Status** column uses a deliberate three-tier vocabulary. **Validated**: every
-documented cache was recovered and matched OS ground truth (the M1 — 2/2, 100%).
-**Measured**: the tool ran and recovered real data but did not fully validate (the
-Intel — L1 and L2 matched, but the 20 MiB L3 is TLB-masked and the automatic level
-count is unstable). **To be measured**: not yet run. The M1/Intel differences that
-follow in §6.2–§6.3 track this convention and are deliberate, not omissions.*
+documented cache was recovered and matched OS ground truth — the M1 (2/2, 100%) and,
+under a 2 MiB huge-page allocation, the Intel (3/3, 100%; with the default 4 KiB pages
+the 20 MiB L3 is TLB-masked, so the huge-page provenance is reported explicitly in
+§6.3). **Measured**: the tool ran and recovered real data but did not fully validate.
+**To be measured**: not yet run. The M1/Intel differences that follow in §6.2–§6.3
+track this convention and are deliberate, not omissions.*
 
 ### 6.2 Apple M1 (Firestorm P-core) — validated
 The WSS probe produces a clean, well-separated latency curve (Fig. 5). Automatic
@@ -416,7 +429,7 @@ in the *clustering* counts reflects genuine measurement noise in the 7–14 MB
 contention region, which is precisely why change-point's stability there is
 notable.
 
-### 6.3 Intel x86 (Raptor Lake P-core) — measured
+### 6.3 Intel x86 (Raptor Lake P-core) — validated (2 MiB huge pages)
 Auto-Echo was built and run on a **13th-generation Intel Core i5-13450HX**
 (Raptor Lake; 6 performance + 4 efficiency cores), pinned to a performance core
 (logical CPU 0) via `SetThreadAffinityMask`, with the same command as the M1
@@ -427,92 +440,123 @@ frequency — confirming the runtime-calibration path on the invariant TSC exact
 as designed. This is the framework's first execution on a second, independent ISA,
 and it both **substantiates and qualifies** the architecture-agnostic claim.
 
-**The two innermost caches are recovered accurately and stably.** The pointer-chase
-curve (Fig. 7) has a flat **1.6 ns L1 plateau to ~48 KiB** and a flat **~5 ns L2
-plateau to ~1.25 MiB**, whose plateau points vary only ~5–15 % across the three
-sweeps. Both land essentially on the documented per-core Raptor Lake figures
-(48 KiB L1d; 1.25 MiB L2 on this SKU). The *same* unsupervised code path that
-mapped the Apple M1's ARM cache boundaries thus recovers an x86 core's L1 and L2 —
-direct cross-architecture evidence for the inner hierarchy.
+**The two innermost caches are recovered accurately and stably (on either page
+size).** The pointer-chase curve (Fig. 7) has a flat **~1.6 ns L1 plateau to
+~48 KiB** and a flat **~5 ns L2 plateau to ~1.25 MiB**, whose plateau points vary
+only ~5–15 % across the three sweeps. Both land essentially on the documented
+per-core Raptor Lake figures (48 KiB L1d; 1.25 MiB L2 on this SKU). The *same*
+unsupervised code path that mapped the Apple M1's ARM cache boundaries thus
+recovers an x86 core's L1 and L2 — direct cross-architecture evidence for the
+inner hierarchy.
 
-**The 20 MiB L3 is *not* recovered: it is masked by TLB/page-walk latency.** Past
-~1.3 MiB the latency climbs steeply and saturates at a flat **~143 ns plateau by
-~4–5 MiB** — far below the 20 MiB L3 capacity — and stays there to 64 MiB. With
-4 KiB pages and a randomised chain, once the working set exceeds the TLB's reach
-every dependent load triggers a page-table walk whose own accesses miss to DRAM,
-so the curve reaches DRAM+page-walk latency before the L3 boundary is ever seen.
-The third band the automatic segmenter reports (~3.5 MiB, ~29 ns) is therefore a
-**TLB-transition artifact, not the L3 cache**. This is precisely the confounder
-anticipated in §6.6, here *demonstrated* on real silicon: without a huge-page
-control a 1-D load-latency sweep cannot separate a large last-level cache from
-TLB cost.
+**With the default 4 KiB pages the 20 MiB L3 is masked by TLB/page-walk latency.**
+Run on 4 KiB pages, past ~1.3 MiB the latency climbs steeply and saturates at a
+flat **~143 ns plateau by ~4–5 MiB** — far below the 20 MiB L3 capacity — and
+stays there to 64 MiB. Once the working set exceeds the TLB's reach every
+dependent load in the randomised chain triggers a page-table walk whose own
+accesses miss to DRAM, so the curve reaches DRAM+page-walk latency before the L3
+boundary is ever seen; the band the automatic segmenter reports near ~3.5 MiB is
+then a **TLB-transition artifact, not the L3 cache**, recall is only 2/3, and the
+level count is unstable across sweeps (estimators ranged 2–5). This is exactly the
+confounder anticipated in §6.6, *demonstrated* on real silicon: without a huge-page
+control a 1-D load-latency sweep cannot separate a large last-level cache from TLB
+cost. It is retained here as the honest 4 KiB baseline that motivates the control
+below.
+
+**A 2 MiB huge-page control unmasks the L3 and validates the full hierarchy.**
+The probe's gated large-page allocation path
+(`--huge-pages`; `VirtualAlloc(MEM_LARGE_PAGES)` on Windows, granted the
+`SeLockMemoryPrivilege` "Lock pages in memory" right) was exercised with
+`python -m autoecho --method wss --max-mb 512 --runs 3 --huge-pages`. A 2 MiB page
+covers 512× the address range of a 4 KiB page, so the TLB reaches deep into the
+working set and the page-walk penalty that saturated the 4 KiB curve is largely
+removed: the deep-memory plateau falls from ~143 ns to **~123 ns**, and a **fourth
+plateau near ~14 MiB** — absent under 4 KiB — emerges before the DRAM rise. Over
+three huge-page sweeps the pipeline now recovers **four levels — L1, L2, L3 and
+DRAM** — and matches **all three documented caches** (Table 5): L1 within +16.0 %,
+L2 within −1.5 %, and the L3 at 13.9 MiB, within a factor of two (0.52 octaves,
+−30.4 %) of the 20 MiB shared L3. **Recall rises to 3/3 = 100 % at 100 % precision
+(no false-positive knees; F1 = 1.00), with mean absolute capacity error 12.8 %.**
+The L3 estimate under-reads the nominal 20 MiB because the pointer chase shares the
+L3 with the rest of the machine and reaches its soft, contended knee before the
+full capacity; the match is nonetheless well inside the factor-of-two tolerance
+(§6.6). This is the framework's first full L1/L2/L3/DRAM validation on x86, and it
+is reported with its **provenance**: it is a property of the **2 MiB huge-page
+run**, not of the default 4 KiB-page behaviour above.
 
 **Table 5: Discovered hierarchy vs. per-core ground truth (Intel i5-13450HX,
-performance core; representative sweep, `--runs 3 --max-mb 64`).**
+performance core; 2 MiB huge pages, `--runs 3 --max-mb 512 --huge-pages`).**
 
 | Level | Detected capacity | Median latency | p5–p95 | Documented (per P-core) | Note |
 | :--- | :---: | :---: | :---: | :---: | :--- |
-| L1 Cache | 56 KiB | 1.62 ns | 1.57–2.12 ns | 48 KiB | +16 % — **matches** |
-| L2 Cache | 1.2 MiB | 5.15 ns | 4.77–7.10 ns | 1.25 MiB | −1.5 % — **matches** |
-| "L3" *(TLB artifact)* | 3.5 MiB | 29.1 ns | 17.7–54.1 ns | 20 MiB (shared) | L3 masked by TLB |
-| DRAM | — | 143.5 ns | 105–153 ns | — | DRAM + page-walk |
+| L1 Cache | 55.7 KiB | 1.59 ns | 1.58–1.96 ns | 48 KiB | +16.0 % — **matches** |
+| L2 Cache | 1.2 MiB | 4.75 ns | 4.74–5.11 ns | 1.25 MiB | −1.5 % — **matches** |
+| L3 Cache | 13.9 MiB | 22.94 ns | 16.74–55.37 ns | 20 MiB (shared) | −30.4 % (0.52 oct) — **matches** |
+| DRAM | — | 123.25 ns | 103.49–129.31 ns | — | page-walk cost lifted by huge pages |
 
-**The automatic level count is unstable on this hardware**, in sharp contrast to
-the M1. The representative sweep is segmented into four bands, but across the three
-sweeps the estimators disagree and vary run to run: K-Means + Silhouette gives a
-modal count of **2** (mean 2.67), the independent change-point cost-knee and the
-Elbow method give **2**, DBSCAN a modal **3**, and GMM a modal **5**. The min–max
-band in Fig. 7 shows why — run-to-run latency spread reaches several hundred per
-cent in the 1.3–4 MiB TLB-transition region, so the "fast vs slow" split (L1+L2 vs
-memory) is the only partition every run agrees on. This is the closely-spaced,
-noisy-level regime in which 1-D Silhouette is known to under-count (Literature
-Review §5), and it is why the clean, unanimous three-level agreement seen on the
-M1 does **not** reproduce here.
+**The productive level counter is now stable and correct, but the estimators are
+still not unanimous.** With huge pages the segmenter finds four bands and, decisively,
+the framework's productive counter — **K-Means + Silhouette — is now stable at the
+correct four levels across all three sweeps (mean 4.0, std 0.00)**, where under
+4 KiB pages it was unstable (modal 2, mean 2.67). DBSCAN also lands on a stable
+four. The ensemble as a whole, however, does **not** reach the clean unanimity seen
+on the M1: the independent change-point cost-knee and the Elbow method still cut at
+**2** (the fast-vs-slow L1+L2 vs memory split), and GMM over-counts to a modal **5**.
+So huge pages fix the *productive* count and the L3 recall, but "one counter correct
+on every architecture" remains too strong — the closely-spaced deep bands are still a
+regime where the count-free cross-checks scatter (Literature Review §5).
 
 **Table 6: Model selection — Elbow and Silhouette *disagree* (Fig. 8).** Unlike the
-M1 (Table 2, where both criteria select k = 3), on the representative Intel sweep the
-two automatic model-selection criteria choose **different** cluster counts:
+M1 (Table 2, where both criteria select k = 3), on the huge-page Intel sweep the
+two automatic model-selection criteria still choose **different** cluster counts —
+even though the L3 is now resolved and the Silhouette count is stable:
 
 | Criterion | Selected k |
 | :--- | :---: |
 | K-Means inertia (Elbow) | 2 |
-| Silhouette score | 4 |
+| Silhouette score | 4 (score 0.935) |
 
 The K-Means inertia elbows at **k = 2** — the fast-vs-slow (L1/L2 vs. memory) split
-every run agrees on — whereas the Silhouette score peaks at **k = 4**. This
-disagreement, visualised in Fig. 8, is the model-selection form of the unstable x86
-level count quantified in Table 7, and the direct contrast with the M1's unanimous
-agreement (Table 2 / Fig. 6).
+every run agrees on — whereas the Silhouette score peaks sharply at **k = 4**
+(score 0.935, up from 0.860 on 4 KiB pages: the recovered L3 plateau makes the
+four-way partition cleaner). This persistent disagreement, visualised in Fig. 8, is
+the model-selection form of the *not-unanimous* x86 estimator ensemble quantified in
+Table 7, and the direct contrast with the M1's fully unanimous agreement
+(Table 2 / Fig. 6): huge pages make the productive Silhouette count both accurate and
+stable, but they do **not** make the Elbow criterion agree with it.
 
 **Table 7: Level-count estimators — comparison and stability (Intel i5-13450HX,
-3 sweeps; expected 4).** Compare with the M1's Table 3, where all five estimators
-agreed at three with zero variance; here *no* estimator is both accurate and
-stable.
+2 MiB huge pages, 3 sweeps; expected 4).** Compare with the M1's Table 3, where all
+five estimators agreed at three with zero variance; here the *productive* counter is
+now accurate and perfectly stable, but the ensemble is not unanimous.
 
 | Rank | Method | Mean levels | Std (stability) | Modal |
 | :--- | :--- | :---: | :---: | :---: |
-| 1 | GMM + Silhouette | 4.33 | 1.70 | 5 |
-| 2 | Change-point (cost-knee) | 2.00 | 0.00 | 2 |
-| 3 | K-Means + Elbow | 2.00 | 0.00 | 2 |
-| 4 | K-Means + Silhouette | 2.67 | 0.94 | 2 |
-| 5 | DBSCAN | 2.67 | 1.25 | 3 |
+| 1 | K-Means + Silhouette | 4.00 | 0.00 | 4 |
+| 2 | DBSCAN | 4.00 | 0.00 | 4 |
+| 3 | GMM + Silhouette | 4.33 | 0.47 | 4 |
+| 4 | Change-point (cost-knee) | 2.00 | 0.00 | 2 |
+| 5 | K-Means + Elbow | 2.00 | 0.00 | 2 |
 
-The only estimator whose modal count reaches the expected four (GMM) is also the
-least stable (std 1.70); the two perfectly stable counters (change-point cost-knee
-and Elbow) both sit at two. This is the quantitative form of "L1 and L2 recovered,
-deeper structure not reliably counted" — and the direct empirical contrast with
-the M1, where K-Means + Silhouette was the accurate, stable winner.
+With huge pages the productive **K-Means + Silhouette** counter is both accurate and
+perfectly stable at the expected four (mean 4.00, std 0.00), reversing the 4 KiB
+result where it was unstable at a modal two; DBSCAN now agrees, and even GMM's modal
+count reaches four. The dissent is confined to the two *fast-vs-slow* counters — the
+change-point cost-knee and the Elbow — which still cut at two. So the honest reading
+shifts from the 4 KiB "deeper structure not reliably counted" to "**the productive
+counter now recovers all four levels, stably, but two independent cross-checks still
+under-count**" — a not-unanimous ensemble, distinct from the M1's five-way agreement.
 
-**Table 8: Change-point level count vs. manual PELT penalty (Intel, representative
+**Table 8: Change-point level count vs. manual PELT penalty (Intel, 2 MiB huge-page
 sweep).** Unlike the M1 (Table 4, where the count slid from six to three as the
-penalty rose), the Intel min-curve segments into **four** bands at *every* penalty:
-the L1 / L2 / TLB-transition / DRAM shape is robustly present in the representative
-curve, so it is the *cross-sweep* Silhouette count (Table 7), not the penalty, that
-is unstable.
+penalty rose), the Intel huge-page min-curve segments into **four** bands across
+essentially the whole penalty range: the L1 / L2 / L3 / DRAM shape is robustly
+present in the curve, so it is the *cross-estimator* agreement (Table 7), not the
+penalty, that remains partial.
 
 | Penalty | 1 | 2 | 3 | 4 | 6 | 8 | 10 |
 | :--- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
-| Levels | 4 | 4 | 4 | 4 | 4 | 4 | 4 |
+| Levels | 5 | 5 | 4 | 4 | 4 | 4 | 4 |
 
 **Ground-truth validation on Windows — now reading true per-core sizes.** The
 framework's automatic accuracy initially read **0 %**, but this was an artifact of
@@ -524,27 +568,34 @@ WMI class reports *per-socket aggregate* cache sizes (it returns L1 = 288 KiB =
 `GetLogicalProcessorInformationEx` (RelationCache) — keeping the data/unified caches
 whose processor-affinity mask serves CPU 0 and reporting L1 = 48 KiB, L2 = 1.25 MiB,
 L3 = 20 MiB on this SKU, with the WMI aggregate retained only as a labelled fallback.
-Against this corrected per-core ground truth the detected L1 (56 vs 48 KiB, +16 %)
-and L2 (1.2 vs 1.25 MiB, −1.5 %) both match within the factor-of-two tolerance, so
-**recall rises from 0 % to 66.7 %** (2 of 3 documented caches; the 20 MiB L3 misses
-only because it is masked) at **66.7 % precision** (the 3.5 MiB TLB knee is the single
-false positive; F1 = 0.67, mean absolute capacity error 5.1 %). This also closes a
-real portability gap — macOS and Linux already read per-core caches via
+Against this corrected per-core ground truth all three detected caches match within
+the factor-of-two tolerance under the 2 MiB huge-page run: L1 (55.7 vs 48 KiB,
++16.0 %), L2 (1.2 vs 1.25 MiB, −1.5 %), and — now that the huge-page control has
+unmasked it — **L3 (13.9 vs 20 MiB, −30.4 %, 0.52 octaves)**. Recall is therefore
+**100 % (3/3 documented caches)** at **100 % precision** (no false-positive knees;
+F1 = 1.00, mean absolute capacity error 12.8 % over three sweeps), up from the
+4 KiB baseline's 66.7 %/66.7 % where the L3 was masked and the ~3.5 MiB TLB knee was a
+false positive. (Both the per-core ground-truth fix and the huge-page control were
+needed: the corrected per-core query alone lifted recall from a spurious 0 % — the
+legacy `Win32_CacheMemory` path reports *per-socket aggregate* sizes the single-core
+probe cannot match — to 66.7 %, and huge pages then carried it to 100 %.) This also
+closes a real portability gap — macOS and Linux already read per-core caches via
 `sysctl`/`sysfs`, and Windows now does too.
 
 ![Auto-Echo memory latency curve — Intel (Fig. 7)](../data/intel_i5_13450hx/memory_mountain.png)  
 *Fig. 7. Pointer-chase latency vs. working-set size on the Intel i5-13450HX
-performance core (minimum over three sweeps; the light band is the min–max spread).
-L1 (~48 KiB) and L2 (~1.25 MiB) are cleanly and stably resolved; beyond ~1.3 MiB
-TLB/page-walk latency dominates and the curve saturates at ~143 ns before the
-20 MiB L3 can appear, so the third shaded band is a TLB-transition region rather
-than the L3 cache.*
+performance core under a **2 MiB huge-page** allocation (minimum over three sweeps;
+the light band is the min–max spread). Four plateaus are now resolved — L1
+(~48 KiB), L2 (~1.25 MiB), L3 (~14 MiB) and DRAM (~123 ns) — because the huge-page
+TLB reach removes the page-walk cost that, under the default 4 KiB pages, saturated
+the curve at ~143 ns and masked the L3 (§6.3).*
 
 ![Model selection — Intel (Fig. 8)](../data/intel_i5_13450hx/model_selection.png)  
-*Fig. 8. Automatic model selection on the Intel i5-13450HX: the K-Means inertia elbow
-selects k = 2 while the Silhouette score peaks at k = 4 — the two criteria
-**disagree**, the model-selection signature of the unstable x86 level count. Contrast
-Fig. 6, where they agree at k = 3 on the M1.*
+*Fig. 8. Automatic model selection on the Intel i5-13450HX (2 MiB huge-page run):
+the K-Means inertia elbow selects k = 2 while the Silhouette score peaks at k = 4 —
+the two criteria still **disagree** even though the L3 is now resolved and the
+Silhouette count is stable, the model-selection signature of the not-unanimous x86
+estimator ensemble. Contrast Fig. 6, where both criteria agree at k = 3 on the M1.*
 
 ### 6.4 Apple M5 (ARM64) — *to be measured*
 An Apple M5 part is a newer Apple-silicon generation; running Auto-Echo on it
@@ -567,50 +618,58 @@ The level count is never hard-coded: it is chosen from the data, so it adapts to
 whatever hierarchy the machine exposes. Across the **two real machines** now
 measured, the *same* code path recovers the resolvable cache boundaries on both a
 128-byte-line ARM64 core and a 64-byte-line x86-64 core: **three** levels on the
-Apple M1 (L1, a merged L2/SLC band, DRAM; §6.2) and a clean **L1 (~48 KiB)** and
-**L2 (~1.25 MiB)** on the Intel i5-13450HX (§6.3). This is genuine
-cross-architecture evidence for the inner hierarchy — the core of the
-architecture-agnostic claim.
+Apple M1 (L1, a merged L2/SLC band, DRAM; §6.2) and, under a 2 MiB huge-page
+control, the **full L1 (~48 KiB) / L2 (~1.25 MiB) / L3 (~14 MiB) / DRAM** hierarchy
+on the Intel i5-13450HX (§6.3). This is genuine cross-architecture evidence for the
+memory hierarchy — the core of the architecture-agnostic claim.
 
 Two honest qualifications follow from the real x86 run. First, the earlier
 expectation (from *synthetic* Intel/AMD/VM curves) that the method would cleanly
-recover **four** L1/L2/L3/DRAM levels on x86 did **not** hold on real silicon:
-with 4 KiB pages, TLB/page-walk latency masks the 20 MiB L3 (§6.3), so the deep
-hierarchy is not separable without a huge-page control. Second, the level *count*
-is stable and unanimous on the M1 but **unstable** on the Intel part (estimators
-ranged 2–5 across sweeps), so "one counter is correct on every architecture" is
-now known to be too strong. The synthetic curves (Fig. 9) should therefore be read
-as *method verification* — showing the counting machinery adapts to a given
-staircase shape — not as evidence about real x86 behaviour, which §6.3 supersedes.
+recover **four** L1/L2/L3/DRAM levels on x86 held **only under a huge-page control**,
+not with the default 4 KiB pages: on 4 KiB pages TLB/page-walk latency masks the
+20 MiB L3 (§6.3), and the deep hierarchy separates only once the 2 MiB large-page
+allocation removes the page-walk cost — so the four-level x86 result is real but
+carries the huge-page provenance. Second, the level *count* is stable **and
+unanimous** on the M1, whereas on the Intel part huge pages make the *productive*
+K-Means + Silhouette counter stable and correct (four levels) but the estimator
+ensemble is still **not unanimous** — the Elbow and change-point cost-knee cross-checks
+under-count to two (§6.3) — so "one counter is correct, and every counter agrees, on
+every architecture" is known to be too strong. The synthetic curves (Fig. 9) should
+therefore be read as *method verification* — showing the counting machinery adapts to a
+given staircase shape — not as evidence about real x86 behaviour, which §6.3 supersedes.
 
 ![One method, many machines (Fig. 9)](../data/diagram_crossplatform.png)
 *Fig. 9. Method verification on **synthetic** staircase curves: the automatic
 counter adapts its level count to the input shape — four levels on an idealised
 x86 profile, three on an M1-shaped profile, two on a flattened VM profile. These
-are modelled curves, not measurements; the real Intel result (§6.3) exhibits TLB
-effects the synthetic x86 profile omits and should be read in preference to it.*
+are modelled curves, not measurements; the real Intel result (§6.3) reaches the
+idealised four-level x86 shape only under a 2 MiB huge-page control — the default
+4 KiB pages exhibit TLB effects the synthetic profile omits — and should be read in
+preference to it.*
 
 | Metric | Apple M1 (ARM64) | Intel i5-13450HX (x86-64) | Apple M5 (ARM64) |
 | :--- | :---: | :---: | :---: |
 | Cache line size | 128 B | 64 B | *TBD (128 B)* |
-| Levels resolved (automatic) | 3 (L1 / L2+SLC / DRAM) | L1 + L2 (stable); L3 masked by TLB | *TBD* |
-| Caches matched (per-core ground truth) | 2/2 documented | 2/3 (L1, L2) | *TBD* |
-| Count stability across 3 sweeps | unanimous, std 0 | unstable (2–5) | *TBD* |
+| Levels resolved (automatic) | 3 (L1 / L2+SLC / DRAM) | 4 (L1 / L2 / L3 / DRAM), 2 MiB huge pages; L3 masked on 4 KiB | *TBD* |
+| Caches matched (per-core ground truth) | 2/2 documented | 3/3 documented (huge pages); 2/3 on 4 KiB | *TBD* |
+| Count stability across 3 sweeps | unanimous, std 0 | productive counter stable at 4 (std 0), ensemble not unanimous (Elbow/cost-knee = 2) | *TBD* |
 | Naive baseline (with `clflush`) | n/a (no ARM flush) | 2 tiers — fails to resolve (L1-residency + timer grid) | *TBD* |
 
 With two real curves now in hand, a combined cross-machine overlay
 (`compare_curves.py`) plots the M1's 128 KiB / 12 MiB knees against the Intel
-core's 48 KiB / 1.25 MiB knees on one log–log axis (Fig. 10). Both are flat in L1;
-the M1 then carries a single high **L2+SLC** shelf (~9 ns) where the Intel shows a
-distinct **L1→L2→L3** staircase; both climb to a ~130–145 ns DRAM plateau. This is
-direct visual evidence for architecture-agnostic recovery of the inner hierarchy
-across ARM64 and x86-64. The Apple M5 curve would extend it to three machines.
+core's 48 KiB / 1.25 MiB / ~14 MiB knees on one log–log axis (Fig. 10, refreshed
+from the 2 MiB huge-page Intel sweep). Both are flat in L1; the M1 then carries a
+single high **L2+SLC** shelf (~9 ns) where the Intel shows a distinct
+**L1→L2→L3** staircase up to the recovered ~14 MiB L3; both climb to a
+~123–130 ns DRAM plateau. This is direct visual evidence for architecture-agnostic
+recovery of the hierarchy across ARM64 and x86-64. The Apple M5 curve would extend
+it to three machines.
 
 ![Cross-machine latency overlay (Fig. 10)](../data/compare_mountain.png)
 *Fig. 10. Auto-Echo latency curves for the Apple M1 (ARM64) and Intel i5-13450HX
-(x86-64) on one axis, each machine's detected cache boundaries marked (dotted).
-L1 and L2 are recovered on both ISAs; the Intel deep region is compressed by 4 KiB
-page-walk (TLB) latency (§6.3).*
+(x86-64, 2 MiB huge-page run) on one axis, each machine's detected cache boundaries
+marked (dotted). L1, L2 and — on the Intel, once huge pages lift the 4 KiB page-walk
+masking — the L3 are recovered across both ISAs (§6.3).*
 
 **Capacity-estimator comparison.** The systematic +23% edge bias (§6.2) prompted
 evaluating two alternatives to the default *plateau-edge* estimator (capacity =
@@ -656,10 +715,13 @@ Following the structure of the reference paper's own threats section [1]:
 
 - **External validity (generalisation).** Results now span *two* machines (an
   Apple M1 performance core and an Intel Raptor Lake performance core), which
-  demonstrates architecture-agnostic recovery of the **inner** hierarchy (L1, L2)
-  across ARM64 and x86-64. Generality of the *deep* hierarchy and of the level
-  *count* is not established: the Intel L3 is masked by TLB effects and its count
-  is unstable (§6.3), and an Apple M5 data point is still outstanding.
+  demonstrates architecture-agnostic recovery of the hierarchy across ARM64 and
+  x86-64 — the inner L1/L2 on both, and, under a 2 MiB huge-page control, the full
+  L1/L2/L3/DRAM on the Intel part (§6.3). Two limits remain: the deep x86 result
+  requires huge pages (the default 4 KiB behaviour still masks the L3), and the
+  level *count*, though stable and correct for the productive Silhouette counter on
+  both machines, is cross-estimator *unanimous* only on the M1. An Apple M5 data
+  point is still outstanding.
 - **Construct validity (what is measured).** The pointer chase measures
   *load-to-use* latency of a serialised dependent chain, which includes base
   pipeline cost — so the ~1.53 ns L1 figure is not directly comparable to the
@@ -668,11 +730,14 @@ Following the structure of the reference paper's own threats section [1]:
 - **Confounding — TLB and page walks.** As the working set grows, the number of
   distinct pages touched grows with it; deep-plateau latency therefore includes
   DTLB-miss and page-walk cost, which page alignment does *not* remove. On the M1
-  this blurs the mid-cache (~10–14 MB) region; on the Intel part it is decisive —
-  with 4 KiB pages the page-walk penalty saturates the curve at ~143 ns by ~4 MiB
-  and **masks the 20 MiB L3 entirely** (§6.3). This is no longer hypothetical: it
-  is the single largest limitation on real x86, and lifting it needs a huge-page
-  (2 MiB) allocation and ideally performance-counter corroboration.
+  this blurs the mid-cache (~10–14 MB) region; on the Intel part it is decisive with
+  the default 4 KiB pages — the page-walk penalty saturates the curve at ~143 ns by
+  ~4 MiB and **masks the 20 MiB L3 entirely** (§6.3). This confounder is now
+  *directly addressed*: the implemented 2 MiB huge-page control extends the TLB reach,
+  drops the deep plateau to ~123 ns, and **recovers the L3** (13.9 MiB, within a
+  factor of two of 20 MiB), lifting recall to 3/3 (§6.3). It remains a genuine limit
+  in that the full x86 hierarchy is separable only under huge pages, not the default
+  4 KiB pages, and performance-counter corroboration is still desirable.
 - **SLC attribution.** Automatic model selection reports the L2 and SLC as one
   merged mid-band; the finer split (forced only at an explicit penalty ~ 4) is
   *consistent with* a distinct L2 and the M1 SLC but is not uniquely attributable
@@ -687,10 +752,12 @@ Following the structure of the reference paper's own threats section [1]:
   fall within tolerance), and the framework reports **precision** (the fraction
   of detected knees that are real caches) alongside **recall** (the fraction of
   documented caches found). This directly penalises false-positive levels: on the
-  Intel part the 3.5 MiB knee is a TLB-transition artefact, so precision is
-  **2/3 (67%)** even though the L1 and L2 knees are correct — a distinction a
-  recall-only "accuracy" conceals, and precisely the failure mode a *discovery*
-  tool must expose. A factor-of-two match remains permissive (a 200 KiB detection
+  Intel part's **default 4 KiB** run the ~3.5 MiB knee is a TLB-transition artefact,
+  so precision is **2/3 (67%)** even though the L1 and L2 knees are correct — a
+  distinction a recall-only "accuracy" conceals, and precisely the failure mode a
+  *discovery* tool must expose. Under the 2 MiB huge-page run that false positive
+  disappears (the third knee is now the real L3), so precision and recall both reach
+  3/3 (100%; §6.3). A factor-of-two match remains permissive (a 200 KiB detection
   would still match a 128 KiB L1) and ground truth is OS-reported; multiple
   tolerances (±10/25/50%) and an external `lmbench` cross-check are the remaining
   planned checks. An **onset**-based capacity estimator (§6.2) — first departure
@@ -701,34 +768,39 @@ Following the structure of the reference paper's own threats section [1]:
   probe measures, so the automatic accuracy metric read a spurious 0 % on the Intel
   part despite correct L1/L2 knees. `validation.py` now reads true per-core sizes via
   `GetLogicalProcessorInformationEx` (with the WMI aggregate kept only as a labelled
-  fallback), so recall on the Intel part is correct (66.7 %; §6.3). The macOS/Linux
+  fallback), so the accuracy metric on the Intel part is correct — 66.7 % on the
+  default 4 KiB pages and 100 % under the 2 MiB huge-page run (§6.3). The macOS/Linux
   paths use per-core `sysctl`/`sysfs` values and were already unaffected.
 - **Conclusion validity.** On the M1 the level count is stable across sweeps and
-  all five estimators agree on three levels (Table 3). This stability is
-  **machine-dependent, not universal**: on the Intel part the same estimators
-  disagree and vary run to run (2–5 levels; §6.3), because the TLB-transition
-  region is genuinely noisy. The robust cross-machine claim is therefore limited
-  to the L1/L2 boundaries, which are stable on both.
+  all five estimators agree on three levels (Table 3). On the Intel part the 2 MiB
+  huge-page run makes the *productive* K-Means + Silhouette counter stable and correct
+  at four levels (std 0; Table 7), but the estimator ensemble does **not** reach
+  M1-style unanimity — the Elbow and change-point cost-knee cross-checks under-count to
+  two (§6.3). Cross-estimator agreement is therefore **machine-dependent, not
+  universal**; the robust cross-machine claim is that the productive counter recovers
+  the boundaries (L1/L2 on both, plus the L3 on x86 under huge pages), while full
+  five-way estimator agreement is demonstrated only on the M1.
 
 ---
 
 ## 7. Discussion & Future Work
-Auto-Echo demonstrates accurate, unprivileged, architecture-agnostic hierarchy
-discovery on Apple Silicon. Remaining directions:
+Auto-Echo demonstrates accurate, architecture-agnostic hierarchy discovery on both
+Apple Silicon and x86-64 — fully unprivileged on the M1, and, on x86, unprivileged
+for the L1/L2 result with the deep L3 map requiring only the ordinary "Lock pages in
+memory" user right (no kernel module or driver). Remaining directions:
 
-- **Huge-page control to unmask the L3 (implemented; blocked on OS privilege).**
-  The Intel run (§6.3) shows that with 4 KiB pages TLB/page-walk latency saturates
-  the curve before the 20 MiB L3 is reached. A gated 2 MiB large-page allocation
-  path is now implemented in the probe (`--huge-pages` / `AUTOECHO_HUGEPAGES=1`;
-  `VirtualAlloc(MEM_LARGE_PAGES)` on Windows, with a graceful fall-back to 4 KiB
-  pages), which cuts the page-walk cost sharply and should expose the L3 plateau,
-  converting the x86 result from "L1/L2 recovered" to a full L1/L2/L3/DRAM map.
-  Executing it is currently blocked on the Windows `SeLockMemoryPrivilege` ("Lock
-  pages in memory"), which returns `ERROR_PRIVILEGE_NOT_HELD` (1314) until an
-  administrator grants that right to the account, the user logs out and back in, and
-  the process runs elevated; this remains the single most valuable next experiment.
-  (The runtime-calibration path on the invariant TSC is already confirmed on real
-  x86 — 0.383 ns/tick on the i5-13450HX.)
+- **Huge-page control to unmask the L3 (implemented and executed).**
+  The default-4 KiB Intel run (§6.3) shows TLB/page-walk latency saturating the curve
+  before the 20 MiB L3 is reached. The gated 2 MiB large-page allocation path
+  (`--huge-pages` / `AUTOECHO_HUGEPAGES=1`; `VirtualAlloc(MEM_LARGE_PAGES)` on Windows,
+  with a graceful fall-back to 4 KiB pages) has now been **run to completion** after
+  granting the Windows `SeLockMemoryPrivilege` ("Lock pages in memory") right: it cuts
+  the page-walk cost sharply, exposes the L3 plateau, and converts the x86 result from
+  "L1/L2 recovered" to a **full, validated L1/L2/L3/DRAM map** (3/3 caches, 100 %
+  recall/precision; §6.3). What remains is to reproduce it on a machine where the L3 is
+  not shared under contention (to test whether the −30 % L3 under-read narrows) and to
+  add performance-counter corroboration. (The runtime-calibration path on the invariant
+  TSC is confirmed on real x86 — 0.383 ns/tick on the i5-13450HX.)
 - **A third machine (Apple M5).** An Apple M5 part would add a second, independent
   ARM64 data point across Apple-silicon generations. (The per-core Windows
   ground-truth query via `GetLogicalProcessorInformationEx`, previously listed here
@@ -768,18 +840,23 @@ of two); the 12 MiB L2 and the OS-unreported ~8 MB System-Level Cache resolve as
 a single mid-band, with their finer split a candidate sub-structure that further
 experiments must confirm (§6.6).
 A second real machine — an Intel Core i5-13450HX on Windows/x86-64 — was then
-measured with the identical pipeline. The same unsupervised code path recovered
-its per-core L1 (~48 KiB) and L2 (~1.25 MiB), giving genuine cross-architecture
-evidence for the inner hierarchy; equally, it exposed the method's limits on real
-x86, where 4 KiB-page TLB/page-walk latency masks the 20 MiB L3 and destabilises
-the automatic level count. Auto-Echo is therefore best characterised as a
-**portable framework validated on two ISAs for the inner cache hierarchy**: L1 and
-L2 are recovered on both ARM64 and x86-64, while resolving the deep hierarchy on
-x86 (via the now-implemented huge-page control, whose execution is blocked on the
-Windows "Lock pages in memory" privilege) and adding an Apple M5 data point are the
-clearly-scoped remaining steps. The honest negative — a masked L3 and an unstable count on x86 —
-is itself a finding, delimiting exactly where a user-space, single-core,
-small-page pointer chase can and cannot map a memory hierarchy.
+measured with the identical pipeline. With the default 4 KiB pages the same
+unsupervised code path recovered its per-core L1 (~48 KiB) and L2 (~1.25 MiB) but
+TLB/page-walk latency masked the 20 MiB L3 and destabilised the automatic level
+count; enabling the 2 MiB huge-page control then removed the page-walk confounder and
+recovered the **full L1/L2/L3/DRAM hierarchy**, matching all three documented caches
+(3/3, 100 % recall and precision, mean absolute error 12.8 %) with the productive
+K-Means + Silhouette counter stable at four levels. Auto-Echo is therefore best
+characterised as a **portable framework validated on two ISAs** — the L1/L2 boundaries
+on both ARM64 and x86-64, and the complete L1/L2/L3/DRAM hierarchy on x86 under a
+huge-page allocation. Its results are reported with their provenance and residual
+honesty: the deep x86 map depends on 2 MiB huge pages rather than the default 4 KiB
+pages, the L3 reads ~30 % below nominal (still within a factor of two), and full
+cross-estimator unanimity is demonstrated only on the M1 — the Elbow and change-point
+cross-checks still under-count on x86. Adding an Apple M5 data point is the clearly-scoped
+remaining step. That the full hierarchy resolves *only* under huge pages is itself a
+finding, delimiting exactly where a user-space, single-core pointer chase can and
+cannot map a memory hierarchy, and what control lifts the limit.
 
 ---
 
