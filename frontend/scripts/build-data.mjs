@@ -136,10 +136,12 @@ const firstNumber = (text) => {
 
 function parseReport(md) {
   const machine = md.match(/\*\*Machine:\*\*\s*(.+)/)?.[1]?.trim() ?? null;
-  // Absent on runs that predate the flag (e.g. the M1) -- treat as the default.
+  // Absent on runs that predate the --huge-pages flag (e.g. the M1). Do NOT
+  // assume 4 KiB: the OS base page size is platform-specific and Apple Silicon
+  // uses 16 KiB, so guessing would display a false provenance. Report the gap.
   const allocation =
     md.match(/\*\*Chase-buffer allocation:\*\*\s*(.+)/)?.[1]?.trim() ??
-    "default 4 KiB pages";
+    "OS default pages (not recorded)";
 
   const levels = tableAfter(md, "## 1. Discovered Memory Hierarchy").map((c) => {
     const [lo, hi] = strip(c[4]).split(/[–-]/).map((s) => firstNumber(s));

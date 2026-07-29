@@ -491,7 +491,7 @@ for every `k` in the search range and for both measured curves, the globally
 optimal partition and compares it against what Lloyd's heuristic reached:
 
 | Machine | Lloyd optimal | Lloyd sub-optimal (excess cost) | Selected $k$: Lloyd | Selected $k$: exact |
-| :--- | :---: | :---: | :---: |
+| :--- | :---: | :---: | :---: | :---: |
 | Apple M1 | $k$ = 2, 3, 4, 7, 8 | $k$ = 5 (+2.9%), 6 (+1.4%) | **3** (sil. 0.894) | **3** (sil. 0.894) |
 | Intel i5-13450HX | $k$ = 2, 3, 4, 5 | $k$ = 6 (+2.0%), 7 (+0.4%), 8 (+0.5%) | **4** (sil. 0.935) | **4** (sil. 0.935) |
 
@@ -663,7 +663,7 @@ absence the "x86-bound" account blames. It still fails (Table 1):
 `clflush` and `rdtscp` (`--method samples`).**
 
 | Inferred tier | Latency range | Mean latency | Samples |
-| :--- | :---: | :---: |
+| :--- | :---: | :---: | :---: |
 | "L1 Cache" | 107–195 ns | 178.57 ns | 27,085 |
 | "L2 Cache" | 195–297 ns | 212.13 ns | 20,623 |
 
@@ -729,10 +729,16 @@ huge-page allocation), spanning both ARM64 and x86-64. Extending the evaluation 
 a third machine is identified as future work (§7).
 
 ### 6.1 Test machines
-| Machine | Arch | Core probed | L1d | L2 | L3 | Line | Status |
-| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
-| Apple M1 | ARM64 | Firestorm P-core | 128 KiB | 12 MiB | — (8 MiB SLC) | 128 B | validated |
-| Intel Core i5-13450HX | x86-64 | Raptor Lake P-core | 48 KiB | 1.25 MiB/core | 20 MiB (shared) | 64 B | validated (L1/L2/L3, 2 MiB huge pages) |
+| Machine | Arch | Core probed | L1d | L2 | L3 | Line | Page | Status |
+| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| Apple M1 | ARM64 | Firestorm P-core | 128 KiB | 12 MiB | — (8 MiB SLC) | 128 B | 16 KiB | validated |
+| Intel Core i5-13450HX | x86-64 | Raptor Lake P-core | 48 KiB | 1.25 MiB/core | 20 MiB (shared) | 64 B | 4 KiB | validated (L1/L2/L3, 2 MiB huge pages) |
+
+*The **Page** column is the OS base page size, confirmed at run time
+(`sysctl hw.pagesize` reports 16384 on the M1; the Windows x86-64 default is
+4 KiB). It is listed because §6.3 shows page size, not cache size, deciding
+whether a last-level cache is visible at all — so it is a hardware parameter of
+the same standing as the line size, and the two machines do not share it (§6.4).*
 
 *Ground-truth cache sizes are read automatically from the OS at run time
 (`sysctl` / `/sys` on macOS/Linux; `GetLogicalProcessorInformationEx` on Windows).
@@ -759,7 +765,7 @@ Table 4):
 **Table 2: Discovered hierarchy vs. ground truth (Apple M1, performance core).**
 
 | Level | Detected capacity | Median latency | p5–p95 | Ground truth | Error |
-| :--- | :---: | :---: | :---: | :---: |
+| :--- | :---: | :---: | :---: | :---: | :---: |
 | L1 Cache | 157.5 KiB | 1.53 ns | 1.53–1.57 ns | 128 KiB | +23.0% (0.30 oct) |
 | L2 (with SLC) | 13.9 MiB | 9.19 ns | 8.73–22.73 ns | 12 MiB† | +16.1% (0.22 oct) |
 | DRAM | — | 130.43 ns | 45.21–141.44 ns | — | — |
@@ -920,7 +926,7 @@ run**, not of the default 4 KiB-page behaviour above.
 performance core; 2 MiB huge pages, `--runs 3 --max-mb 512 --huge-pages`).**
 
 | Level | Detected capacity | Median latency | p5–p95 | Documented (per P-core) | Note |
-| :--- | :---: | :---: | :---: | :---: |
+| :--- | :---: | :---: | :---: | :---: | :--- |
 | L1 Cache | 55.7 KiB | 1.59 ns | 1.58–1.96 ns | 48 KiB | +16.0 % — **matches** |
 | L2 Cache | 1.2 MiB | 4.75 ns | 4.74–5.11 ns | 1.25 MiB | −1.5 % — **matches** |
 | L3 Cache | 13.9 MiB | 22.94 ns | 16.74–55.37 ns | 20 MiB (shared) | −30.4 % (0.52 oct) — **matches** |
@@ -1040,7 +1046,34 @@ unanimous** on the M1, whereas on the Intel part huge pages make the *productive
 K-Means + Silhouette counter stable and correct (four levels) but the estimator
 ensemble is still **not unanimous** — the Elbow and change-point cost-knee cross-checks
 under-count to two (§6.3) — so "one counter is correct, and every counter agrees, on
-every architecture" is known to be too strong. The synthetic curves (Fig. 9) should
+every architecture" is known to be too strong.
+
+A third qualification concerns the comparison itself rather than the method, and it
+follows from a parameter §6.1 now records: **the two machines were not run on the
+same page size.** macOS on Apple Silicon uses a 16 KiB base page — four times the
+x86-64 default, confirmed at run time — and the M1 sweeps use it, because the
+probe's large-page path is gated to Windows (§4.1). The consequence is arithmetic:
+for any given working set the M1 touches a quarter as many pages as the Intel does
+under 4 KiB, and therefore places a quarter of the demand on its address-translation
+hardware. Given that §6.3 shows page-walk cost masking a 20 MiB cache on the Intel
+at 4 KiB, the M1's larger base page is a plausible part of why no comparable
+saturation appears on the M1 curve at all — its DRAM plateau is reached at the
+capacity one would expect, not prematurely.
+
+Two things follow, and both are limitations rather than results. First, the
+M1-versus-Intel comparison is confounded: the M1's three-level result is a 16 KiB
+result and the Intel's four-level result a 2 MiB result, so neither the agreement
+nor the disagreement between them is attributable to the ISA alone. Second, the
+M1's merged L2/SLC band (§6.2) sits in exactly the working-set range where
+translation cost begins to matter, and it has never been probed with pages larger
+than the OS default. Whether a larger page would split that band, as 2 MiB pages
+split the Intel's deep region, is an open question this dissertation does not
+answer; §7 scopes the experiment. What can be said is that the quantitative
+attribution — how much of the M1's cleaner deep curve is the larger page and how
+much is the architecture — would need the translation-lookaside-buffer geometry of
+both parts, which is documented for neither at the level of detail required.
+
+The synthetic curves (Fig. 9) should
 therefore be read as *method verification* — showing the counting machinery adapts to a
 given staircase shape — not as evidence about real x86 behaviour, which §6.3 supersedes.
 
@@ -1056,6 +1089,8 @@ preference to it.*
 | Metric | Apple M1 (ARM64) | Intel i5-13450HX (x86-64) |
 | :--- | :---: | :---: |
 | Cache line size | 128 B | 64 B |
+| OS base page size | 16 KiB | 4 KiB |
+| Pages spanned by a 16 MiB working set | 1,024 | 4,096 |
 | Levels resolved (automatic) | 3 (L1 / L2+SLC / DRAM) | 4 (L1 / L2 / L3 / DRAM), 2 MiB huge pages; L3 masked on 4 KiB |
 | Caches matched (per-core ground truth) | 2/2 documented | 3/3 documented (huge pages); 2/3 on 4 KiB |
 | Count stability across 3 sweeps | unanimous, std 0 | productive counter stable at 4 (std 0), ensemble not unanimous (Elbow/cost-knee = 2) |
@@ -1132,7 +1167,7 @@ estimator (the last size still on the plateau floor before latency departs by
 10%). Absolute error against per-core ground truth:
 
 | Level (per-core GT) | Edge (default) | Midpoint | Onset | Hybrid |
-| :--- | :---: | :---: | :---: |
+| :--- | :---: | :---: | :---: | :---: |
 | Apple M1 — L1 (128 KiB) | +23.0% | +27.4% | +0.0% | **+0.0%** |
 | Apple M1 — L2+SLC (12 MiB) | +16.1% | +20.2% | −71.0% | +16.1% |
 | Intel — L1 (48 KiB) | +16.0% | +20.1% | −96.9% | **−96.9%** |
@@ -1215,6 +1250,15 @@ Following the structure of the reference paper's own threats section [1]:
   factor of two of 20 MiB), lifting recall to 3/3 (§6.3). It remains a genuine limit
   in that the full x86 hierarchy is separable only under huge pages, not the default
   4 KiB pages, and performance-counter corroboration is still desirable.
+- **Page size differs between the two machines (confound).** The M1 runs on a
+  16 KiB base page and the Intel on 4 KiB (§6.1), so for a given working set the M1
+  places a quarter of the Intel's demand on address translation. Because the probe's
+  large-page path is gated to Windows (§4.1), the M1 has never been measured at any
+  other page size. The M1 and Intel results are therefore not like-for-like, and the
+  cleaner deep region of the M1 curve cannot be attributed to the architecture alone
+  — part of it may be the larger page. This does not affect either machine's
+  validation against its *own* ground truth, which is what §6.2 and §6.3 report, but
+  it does weaken any inference drawn from comparing the two curves (§6.4).
 - **SLC attribution.** Automatic model selection reports the L2 and SLC as one
   merged mid-band; the finer split (forced only at an explicit penalty ~ 4) is
   *consistent with* a distinct L2 and the M1 SLC but is not uniquely attributable
@@ -1297,6 +1341,17 @@ memory" user right (no kernel module or driver). Remaining directions:
   not shared under contention (to test whether the −30 % L3 under-read narrows) and to
   add performance-counter corroboration. (The runtime-calibration path on the invariant
   TSC is confirmed on real x86 — 0.383 ns/tick on the i5-13450HX.)
+- **A page-size control on Apple Silicon.** The large-page path is currently gated to
+  Windows, so the M1 has only ever been measured on the OS default 16 KiB page — a
+  confound in the cross-machine comparison (§6.4, §6.5). macOS exposes 2 MiB
+  superpages through `mmap` with `VM_FLAGS_SUPERPAGE_SIZE_2MB`, which would make the
+  page size a controlled variable on *both* machines rather than one. The specific
+  question it would settle is whether the merged L2/SLC mid-band of §6.2 is a genuine
+  capacity feature or is partly translation cost: 2 MiB pages split the Intel's deep
+  region, and the M1's merged band lies in the working-set range where the same
+  mechanism would operate. A negative result — the band surviving intact under
+  superpages — would materially strengthen the SLC attribution, which §6.5 currently
+  has to leave open.
 - **Broadening the hardware base.** Both machines evaluated here are consumer
   laptop performance cores, so the generalisation claim rests on a narrow sample.
   Three extensions would each probe a different axis: a newer Apple-silicon part

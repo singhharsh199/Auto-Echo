@@ -63,16 +63,33 @@ def _score(curve: pd.DataFrame, density, label: str) -> dict:
 def cmd_measure(args) -> None:
     from autoecho import wss
 
+    use_huge = False
+    if args.huge_pages:
+        # Verify rather than assume: the provenance of every row depends on it.
+        from autoecho import wss_probe_c
+
+        use_huge = bool(wss_probe_c.hugepages_available())
+        if not use_huge:
+            raise SystemExit(
+                "--huge-pages requested but 2 MiB large pages are unavailable "
+                "(needs the 'Lock pages in memory' right and an elevated shell). "
+                "Refusing to run: the resulting rows would silently be 4 KiB-page "
+                "measurements labelled as huge-page ones."
+            )
+
     rows = []
     for density in args.densities:
         wss.SAMPLES_PER_OCTAVE = density  # read by default_wss_sizes at call time
-        curve = wss.sweep(max_bytes=args.max_mb * 1024 * 1024, seed=args.seed)
+        curve = wss.sweep(max_bytes=args.max_mb * 1024 * 1024, seed=args.seed,
+                          huge_pages=use_huge)
         rows.append(_score(curve, density, f"{density}/octave"))
         if args.save:
             path = f"{args.save}/wss_curve_density{density}.csv"
             curve.to_csv(path, index=False)
             print(f"  wrote {path} ({len(curve)} points)")
-    _report(rows, f"Measured on this machine (max {args.max_mb} MiB, seed {args.seed})")
+    pages = "2 MiB large pages" if use_huge else "OS default pages"
+    _report(rows, f"Measured on this machine (max {args.max_mb} MiB, "
+                  f"seed {args.seed}, {pages})")
 
 
 def cmd_subsample(args) -> None:
@@ -95,6 +112,9 @@ def main() -> None:
     m.add_argument("--densities", type=int, nargs="+", default=[5, 10, 20])
     m.add_argument("--max-mb", type=int, default=256)
     m.add_argument("--seed", type=int, default=42)
+    m.add_argument("--huge-pages", action="store_true",
+                   help="request a 2 MiB large-page chase buffer (Windows only); "
+                        "aborts rather than silently falling back to 4 KiB pages")
     m.add_argument("--save", default=None, help="directory to write per-density CSVs")
     m.set_defaults(func=cmd_measure)
 
