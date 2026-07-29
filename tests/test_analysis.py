@@ -1,5 +1,6 @@
 """Tests for the level-discovery engine (change-point + clustering)."""
 import numpy as np
+import pytest
 
 from autoecho.analysis import (
     LEVEL_NAMES,
@@ -56,15 +57,44 @@ def test_dbscan_returns_nonnegative_count(three_level_curve):
 
 
 def test_capacity_method_edge_is_default(three_level_curve):
-    # The default estimator must be "edge" (unchanged behaviour); onset/hybrid
+    # The default estimator must be "edge" (unchanged behaviour); the alternatives
     # run without error and keep the same segmentation, only the capacity differs.
     base = detect_levels_changepoint(three_level_curve)
     edge = detect_levels_changepoint(three_level_curve, capacity_method="edge")
     assert (base["capacity_bytes"].fillna(-1).tolist()
             == edge["capacity_bytes"].fillna(-1).tolist())
-    for m in ["onset", "hybrid"]:
+    for m in ["onset", "hybrid", "midpoint"]:
         lv = detect_levels_changepoint(three_level_curve, capacity_method=m)
         assert len(lv) == len(edge)
+
+
+def test_midpoint_is_geometric_mean_of_last_fit_and_first_miss(three_level_curve):
+    """``midpoint`` must actually bisect the transition, not silently fall back to
+    ``edge`` (dissertation §5.4, Table 19). It previously did fall through, which
+    made the published midpoint column irreproducible from this code."""
+    edge = detect_levels_changepoint(three_level_curve, capacity_method="edge")
+    mid = detect_levels_changepoint(three_level_curve, capacity_method="midpoint")
+    wss = three_level_curve["wss_bytes"].values
+
+    assert len(mid) == len(edge)
+    for i in range(len(edge) - 1):          # every level except DRAM has a capacity
+        last_fit = edge["capacity_bytes"].iloc[i]
+        first_miss = wss[wss > last_fit].min()
+        assert mid["capacity_bytes"].iloc[i] == pytest.approx(
+            np.sqrt(last_fit * first_miss))
+        # A real bisection sits strictly between the two, hence above the edge.
+        assert last_fit < mid["capacity_bytes"].iloc[i] < first_miss
+
+
+def test_midpoint_degrades_to_edge_without_a_following_level():
+    """With no next segment there is nothing to bisect, so the helper must return
+    the edge rather than raise or invent a value."""
+    from autoecho.analysis import _level_capacity
+    wss = np.array([1000.0, 2000.0, 4000.0])
+    lat = np.array([1.5, 1.5, 1.5])
+    assert _level_capacity(wss, lat, "midpoint", next_wss=None) == 4000.0
+    assert _level_capacity(wss, lat, "midpoint", next_wss=0) == 4000.0
+    assert _level_capacity(wss, lat, "midpoint", next_wss=16000.0) == pytest.approx(8000.0)
 
 
 def test_onset_helper_lands_on_flat_plateau_knee():

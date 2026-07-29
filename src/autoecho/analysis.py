@@ -131,8 +131,13 @@ def _plateau_is_flat(lat, tol: float = 0.15) -> bool:
 
 def _onset_capacity(wss, lat, tau: float = 0.15, floor_pct: int = 10) -> float:
     """Capacity as the *onset* of the rise: the last size still on the plateau
-    floor before latency first departs it by ``tau``. Exact on a flat plateau
-    with a sharp knee; use only when :func:`_plateau_is_flat`."""
+    floor before latency first departs it by ``tau`` (the +15% departure
+    threshold of §3.4). Exact on a flat plateau with a sharp knee; use only when
+    :func:`_plateau_is_flat`.
+
+    Note the *first*-departure criterion: a single outlier above the threshold
+    terminates the scan, which is why this estimator collapses on the huge-page
+    Intel L1 (§5.4). A sustained-departure rule is the documented repair (§6)."""
     floor = float(np.percentile(lat, floor_pct))
     thresh = floor * (1.0 + tau)
     onset = float(wss[0])
@@ -144,21 +149,34 @@ def _onset_capacity(wss, lat, tau: float = 0.15, floor_pct: int = 10) -> float:
     return onset
 
 
-def _level_capacity(wss, lat, method: str) -> float:
+def _level_capacity(wss, lat, method: str, next_wss: float | None = None) -> float:
     """Estimate a cache's capacity from its plateau's working-set sizes/latencies.
 
     ``edge`` (default): the plateau's upper edge -- stable, but biased +16-23%
     upward (soft-knee effect). ``onset``: the departure point -- exact on flat
     plateaus, catastrophic on sloping ones. ``hybrid``: onset on a flat plateau,
     edge otherwise -- recovers the nominal size where the knee is sharp (e.g. the
-    M1 L1) without the onset's instability elsewhere. See the §6.5
-    capacity-estimator comparison."""
+    M1 L1) without the onset's instability elsewhere. ``midpoint``: the geometric
+    mean of the last-fit size (this plateau's edge) and the first-miss size (the
+    next segment's first working set), i.e. the centre of the transition on the
+    log axis the sweep actually samples; needs ``next_wss``, and degenerates to
+    ``edge`` without it. See the §5.4 capacity-estimator comparison.
+    
+    :param next_wss: the first working-set size of the *following* level, i.e.
+        the first size no longer served at this plateau's latency. Only the
+        ``midpoint`` estimator consumes it.
+    """
     wss = np.asarray(wss, dtype=float)
     lat = np.asarray(lat, dtype=float)
     if method == "onset":
         return _onset_capacity(wss, lat)
     if method == "hybrid":
         return _onset_capacity(wss, lat) if _plateau_is_flat(lat) else float(wss.max())
+    if method == "midpoint":
+        edge = float(wss.max())
+        if next_wss is None or not np.isfinite(next_wss) or next_wss <= 0:
+            return edge  # no following level sampled: nothing to bisect
+        return float(np.sqrt(edge * float(next_wss)))
     return float(wss.max())  # "edge" (default)
 
 
@@ -279,8 +297,12 @@ def detect_levels_changepoint(
             name = f"L{i + 1} Cache"
         # Capacity of this level's cache (NaN for the final/DRAM level). The
         # estimator is selectable; "edge" (default) is the plateau's upper edge.
-        capacity = (_level_capacity(wss, lat, capacity_method)
-                    if i < n_levels - 1 else float("nan"))
+        # "midpoint" additionally needs the next level's first size (first miss).
+        if i < n_levels - 1:
+            next_wss = float(curve["wss_bytes"].values[merged[i + 1][0]])
+            capacity = _level_capacity(wss, lat, capacity_method, next_wss=next_wss)
+        else:
+            capacity = float("nan")
         rows.append(
             {
                 "level_name": name,

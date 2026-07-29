@@ -12,13 +12,8 @@ import {
   YAxis,
 } from "recharts";
 import type { Machine } from "../types";
-import {
-  bandColor,
-  formatKiB,
-  formatNs,
-  logLatencyTicks,
-  powerOfTwoTicks,
-} from "../lib/format";
+import { formatKiB, formatNs, logLatencyTicks, powerOfTwoTicks } from "../lib/format";
+import { bandTint, seriesColor } from "../lib/series";
 
 interface Props {
   machines: Machine[];
@@ -92,136 +87,184 @@ export function MemoryMountain({
 
   const xTicks = powerOfTwoTicks(xDomain[0], xDomain[1]);
   const yTicks = logLatencyTicks(yDomain[0], yDomain[1]);
+  const primaryColor = seriesColor(primary);
 
   return (
-    <div className="h-[clamp(380px,52vh,620px)] w-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={rows} margin={{ top: 12, right: 18, bottom: 34, left: 8 }}>
-          <CartesianGrid stroke="var(--grid)" strokeDasharray="2 4" />
+    <ResponsiveContainer width="100%" height="100%">
+      <ComposedChart data={rows} margin={{ top: 16, right: 22, bottom: 38, left: 8 }}>
+        {/*
+          Per-series gradients for the envelope fill: a vertical fade so the
+          spread band is densest at the curve and dissolves downward, rather
+          than sitting as a flat translucent slab.
+        */}
+        <defs>
+          {machines.map((m, i) => {
+            const c = seriesColor(m, i);
+            return (
+              <linearGradient
+                key={`grad-${m.id}`}
+                id={`fill-${m.id}`}
+                x1="0"
+                y1="0"
+                x2="0"
+                y2="1"
+              >
+                <stop offset="0%" stopColor={c} stopOpacity={0.32} />
+                <stop offset="100%" stopColor={c} stopOpacity={0.04} />
+              </linearGradient>
+            );
+          })}
+          {/* Soft glow applied to the reported curve, which is what makes the
+              line read as emissive against the dark plot ground. */}
+          <filter id="curve-glow" x="-20%" y="-40%" width="140%" height="180%">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
 
-          {/* Detected cache regions, shaded as in the report's memory mountain. */}
-          {showLevels &&
-            primary.levels.map((lv) =>
-              lv.rangeLoKiB != null && lv.rangeHiKiB != null ? (
-                <ReferenceArea
-                  key={`band-${lv.label}`}
-                  x1={Math.max(lv.rangeLoKiB, xDomain[0])}
-                  x2={Math.min(lv.rangeHiKiB, xDomain[1])}
-                  fill={bandColor(lv.label)}
-                  stroke="none"
-                  ifOverflow="hidden"
-                />
-              ) : null
-            )}
+        <CartesianGrid stroke="var(--grid)" strokeDasharray="2 5" />
 
-          <XAxis
-            dataKey="wss"
-            type="number"
-            scale="log"
-            domain={xDomain}
-            ticks={xTicks}
-            allowDataOverflow
-            tickFormatter={(v: number) => formatKiB(v, 0)}
-            tick={{ fill: "var(--ink-3)", fontSize: 11 }}
-            stroke="var(--hairline-strong)"
-            label={{
-              value: "Working-set size (log)",
-              position: "insideBottom",
-              offset: -18,
-              fill: "var(--ink-2)",
-              fontSize: 12,
-            }}
-          />
-          <YAxis
-            type="number"
-            scale="log"
-            domain={yDomain}
-            ticks={yTicks}
-            allowDataOverflow
-            width={62}
-            tickFormatter={(v: number) => `${v}`}
-            tick={{ fill: "var(--ink-3)", fontSize: 11 }}
-            stroke="var(--hairline-strong)"
-            label={{
-              value: "Latency (ns, log)",
-              angle: -90,
-              position: "insideLeft",
-              offset: 14,
-              fill: "var(--ink-2)",
-              fontSize: 12,
-              style: { textAnchor: "middle" },
-            }}
-          />
-
-          <Tooltip
-            content={<MountainTooltip machines={machines} primary={primary} />}
-            cursor={{ stroke: "var(--ink-3)", strokeDasharray: "3 3" }}
-          />
-
-          {/* Min-max spread across the independent sweeps. */}
-          {showBand && (
-            <Area
-              dataKey={`band_${primary.id}`}
-              stroke="none"
-              fill={primary.color}
-              fillOpacity={0.16}
-              isAnimationActive={false}
-              connectNulls
-              activeDot={false}
-            />
+        {/* Detected cache regions, shaded as in the report's memory mountain. */}
+        {showLevels &&
+          primary.levels.map((lv) =>
+            lv.rangeLoKiB != null && lv.rangeHiKiB != null ? (
+              <ReferenceArea
+                key={`band-${lv.label}`}
+                x1={Math.max(lv.rangeLoKiB, xDomain[0])}
+                x2={Math.min(lv.rangeHiKiB, xDomain[1])}
+                fill={bandTint(lv.label)}
+                stroke="none"
+                ifOverflow="hidden"
+              />
+            ) : null
           )}
 
-          {/* Individual sweeps, dashed so they read as secondary to the minimum. */}
-          {visibleRuns.map((runId, i) => (
-            <Line
-              key={`run-${runId}`}
-              dataKey={`run_${primary.id}_${runId}`}
-              stroke={primary.color}
-              strokeOpacity={0.5}
-              strokeWidth={1}
-              strokeDasharray={RUN_DASH[i % RUN_DASH.length]}
-              dot={false}
-              isAnimationActive={false}
-              connectNulls
-            />
-          ))}
+        <XAxis
+          dataKey="wss"
+          type="number"
+          scale="log"
+          domain={xDomain}
+          ticks={xTicks}
+          allowDataOverflow
+          tickFormatter={(v: number) => formatKiB(v, 0)}
+          tick={{ fill: "var(--ink-3)", fontSize: 11, fontFamily: "var(--font-mono)" }}
+          stroke="var(--axis)"
+          tickLine={{ stroke: "var(--axis)" }}
+          /* Presentation only: the tick *values* still come from
+             powerOfTwoTicks(). This lets Recharts drop labels that would
+             collide on a narrow viewport rather than overprinting them. */
+          minTickGap={26}
+          label={{
+            value: "WORKING-SET SIZE (LOG)",
+            position: "insideBottom",
+            offset: -20,
+            fill: "var(--ink-4)",
+            fontSize: 10,
+            letterSpacing: "0.12em",
+          }}
+        />
+        <YAxis
+          type="number"
+          scale="log"
+          domain={yDomain}
+          ticks={yTicks}
+          allowDataOverflow
+          width={62}
+          tickFormatter={(v: number) => `${v}`}
+          tick={{ fill: "var(--ink-3)", fontSize: 11, fontFamily: "var(--font-mono)" }}
+          stroke="var(--axis)"
+          tickLine={{ stroke: "var(--axis)" }}
+          label={{
+            value: "LATENCY (NS, LOG)",
+            angle: -90,
+            position: "insideLeft",
+            offset: 14,
+            fill: "var(--ink-4)",
+            fontSize: 10,
+            letterSpacing: "0.12em",
+            style: { textAnchor: "middle" },
+          }}
+        />
 
-          {/* The reported curve: minimum over repeats, per machine. */}
-          {machines.map((m) => (
-            <Line
-              key={`min-${m.id}`}
-              dataKey={`min_${m.id}`}
-              stroke={m.color}
-              strokeWidth={2}
-              dot={false}
-              isAnimationActive={false}
-              connectNulls
-            />
-          ))}
+        <Tooltip
+          content={<MountainTooltip machines={machines} primary={primary} />}
+          cursor={{ stroke: "var(--accent-2)", strokeWidth: 1, strokeDasharray: "3 4" }}
+        />
 
-          {/* Inferred capacities: the plateau-to-rise transition per level. */}
-          {showBoundaries &&
-            primary.levels.map((lv) =>
-              lv.capacityKiB != null ? (
-                <ReferenceLine
-                  key={`cap-${lv.label}`}
-                  x={lv.capacityKiB}
-                  stroke={primary.color}
-                  strokeDasharray="5 4"
-                  strokeOpacity={0.85}
-                  ifOverflow="hidden"
-                  label={{
-                    value: formatKiB(lv.capacityKiB, 1),
-                    position: "top",
-                    fill: "var(--ink-2)",
-                    fontSize: 10,
-                  }}
-                />
-              ) : null
-            )}
-        </ComposedChart>
-      </ResponsiveContainer>
-    </div>
+        {/* Min-max spread across the independent sweeps. */}
+        {showBand && (
+          <Area
+            dataKey={`band_${primary.id}`}
+            stroke="none"
+            fill={`url(#fill-${primary.id})`}
+            isAnimationActive={false}
+            connectNulls
+            activeDot={false}
+          />
+        )}
+
+        {/* Individual sweeps, dashed so they read as secondary to the minimum. */}
+        {visibleRuns.map((runId, i) => (
+          <Line
+            key={`run-${runId}`}
+            dataKey={`run_${primary.id}_${runId}`}
+            stroke={primaryColor}
+            strokeOpacity={0.45}
+            strokeWidth={1}
+            strokeDasharray={RUN_DASH[i % RUN_DASH.length]}
+            dot={false}
+            isAnimationActive={false}
+            connectNulls
+          />
+        ))}
+
+        {/* The reported curve: minimum over repeats, per machine. */}
+        {machines.map((m, i) => (
+          <Line
+            key={`min-${m.id}`}
+            dataKey={`min_${m.id}`}
+            stroke={seriesColor(m, i)}
+            strokeWidth={2.25}
+            strokeLinecap="round"
+            dot={false}
+            isAnimationActive={false}
+            connectNulls
+            filter="url(#curve-glow)"
+            activeDot={{
+              r: 4,
+              fill: seriesColor(m, i),
+              stroke: "var(--bg)",
+              strokeWidth: 2,
+            }}
+          />
+        ))}
+
+        {/* Inferred capacities: the plateau-to-rise transition per level. */}
+        {showBoundaries &&
+          primary.levels.map((lv) =>
+            lv.capacityKiB != null ? (
+              <ReferenceLine
+                key={`cap-${lv.label}`}
+                x={lv.capacityKiB}
+                stroke={primaryColor}
+                strokeDasharray="5 5"
+                strokeOpacity={0.7}
+                ifOverflow="hidden"
+                label={{
+                  value: formatKiB(lv.capacityKiB, 1),
+                  position: "top",
+                  fill: "var(--ink-2)",
+                  fontSize: 10,
+                  fontFamily: "var(--font-mono)",
+                }}
+              />
+            ) : null
+          )}
+      </ComposedChart>
+    </ResponsiveContainer>
   );
 }
 
@@ -247,41 +290,29 @@ function MountainTooltip({ active, label, machines, primary, payload }: TooltipP
   );
 
   return (
-    <div
-      className="mono rounded-md border px-3 py-2 text-xs shadow-lg"
-      style={{
-        background: "var(--surface)",
-        borderColor: "var(--hairline-strong)",
-        color: "var(--ink)",
-      }}
-    >
-      <div className="mb-1.5 font-semibold">{formatKiB(label, 2)}</div>
-      {machines.map((m) => {
+    <div className="tip">
+      <div className="tip__wss">{formatKiB(label, 2)}</div>
+      {machines.map((m, i) => {
         const v = get(`min_${m.id}`) as number | undefined;
         if (v == null) return null;
         return (
-          <div key={m.id} className="flex items-center gap-2 py-0.5">
-            <span
-              aria-hidden="true"
-              className="inline-block h-2 w-2 shrink-0 rounded-full"
-              style={{ background: m.color }}
-            />
-            <span style={{ color: "var(--ink-2)" }}>{m.name}</span>
-            <span className="ml-auto pl-3">{formatNs(v)}</span>
+          <div
+            className="tip__row"
+            key={m.id}
+            style={{ "--dot": seriesColor(m, i) } as React.CSSProperties}
+          >
+            <span className="tip__dot" aria-hidden="true" />
+            <span className="tip__name">{m.name}</span>
+            <span className="tip__val">{formatNs(v)}</span>
           </div>
         );
       })}
       {band && (
-        <div className="mt-1 pt-1" style={{ borderTop: "1px solid var(--hairline)" }}>
-          <span style={{ color: "var(--ink-3)" }}>spread </span>
-          {formatNs(band[0])} – {formatNs(band[1])}
+        <div className="tip__meta">
+          spread {formatNs(band[0])} – {formatNs(band[1])}
         </div>
       )}
-      {level && (
-        <div className="mt-1" style={{ color: "var(--ink-3)" }}>
-          in {level.label}
-        </div>
-      )}
+      {level && <div className="tip__meta">in {level.label}</div>}
     </div>
   );
 }

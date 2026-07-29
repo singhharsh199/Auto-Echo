@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Quiesced-vs-loaded L3-contention comparison (Auto-Echo Task B, §6.3).
+"""Quiesced-vs-loaded L3-contention comparison (Auto-Echo Task B, §5.3.2).
 
 For each condition's multi-sweep curve (``wss_curves_all.csv``), this detects the
 memory levels **per sweep** with a fixed change-point penalty (4 levels:
 L1/L2/L3/DRAM), so the "detected L3 capacity" is extracted by an identical,
 count-stable rule in every condition. It reports the L3 knee (effective L3
 capacity) as median [min-max] over the sweeps, plus the L3 and DRAM median
-latencies -- the numbers the §6.3 contention test turns on.
+latencies -- the numbers the §5.3.2 contention test turns on.
 
 The L3 *knee* (a working-set-size where the plateau ends) is frequency-invariant:
 uniform DVFS scaling shifts every latency but does not move the knee, so a knee

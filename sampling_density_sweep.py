@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test whether the selected level count depends on the sweep's sampling density.
 
-Motivation (dissertation Section 4.2.1). The Silhouette coefficient weights every
+Motivation (dissertation §3.2.1). The Silhouette coefficient weights every
 observation equally, so its value depends on how many points fall in each cluster
 -- and that is fixed by the experimenter's geometric sampling grid, not by the
 hardware. A level spanning more octaves receives proportionally more points. The

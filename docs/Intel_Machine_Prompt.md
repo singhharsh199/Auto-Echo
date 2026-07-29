@@ -19,6 +19,7 @@ analysis `src/autoecho/analysis.py`, ground truth `src/autoecho/validation.py`, 
 Windows, x86-64; per-core caches L1d **48 KiB**, L2 **~1.25–2 MiB/core**, L3 **~20 MiB
 shared**, 64-byte lines; the probe pins to CPU 0.
 
+
 ## YOUR GOAL: validate the Intel results — move the Intel machine from "measured" to "validated"
 
 The framework is fully **validated** on an Apple M1 — that is the standard you must reach.

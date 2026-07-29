@@ -3,10 +3,59 @@
 Living checklist of what's left to do. Updated 2026-07-29.
 
 **Machine status: M1 = validated (2/2). Intel i5-13450HX = validated (3/3, 2 MiB
-huge pages).** The two items that were blocking the 80+ band are now done: the
-**lmbench external cross-check** (§6.3.1, Table 11, Fig. 11) and the **shared-L3
-contention test** (§6.3.2, Table 12, Fig. 12). Suite: **35 passed, 0 skipped** on
-Windows (one test skips only on macOS).
+huge pages, mean |error| 6.3 %).** The two items that were blocking the 80+ band are
+done: the **lmbench external cross-check** (§5.3.1, Tables 13–15, Fig. 9) and the
+**shared-L3 contention test** (§5.3.2, Table 16, Fig. 10). Suite on macOS:
+**36 passed, 1 skipped** (the skip is Windows-only ground truth).
+
+**Note on numbering:** the dissertation was restructured after the second supervisor
+review. The Abstract is now unnumbered front matter and sections run 1–8, so every
+§ reference shifted down by one (old §6.3 → new §5.3). Tables are numbered 1–20 and
+figures 1–12, both sequential in reading order. Section references in the Python
+docstrings were updated to match.
+
+## Fixed in the post-review revision
+- [x] **Figure/table order** — figures and tables now appear sequentially in reading
+      order (previously Figs. 11/12 preceded 9/10 and Table 10 came after 12). The five
+      previously unnumbered tables were given captions and folded into the sequence;
+      Table 6 previously had a caption with no table at all.
+- [x] **`midpoint` capacity estimator implemented.** It had been documented and
+      tabulated in §5.4 but `_level_capacity` silently fell through to `edge`, so the
+      published Midpoint column was not reproducible from the code. Now computes the
+      geometric mean of last-fit and first-miss sizes, reproduces the published values
+      exactly (+27.4/+20.2/+20.1/+2.0/−27.9 %), and is covered by two new tests.
+- [x] **L3 headline corrected from −30.4 % to −1.5 %.** The knee is now detected
+      **per sweep** and the median reported; 9/10 sweeps give 19.7 MiB. The old figure
+      came from detecting on the minimum-over-sweeps envelope, which biases a *knee*
+      inward — the minimum is the right statistic for a latency and the wrong one for a
+      boundary. Mean |capacity error| falls from 12.8 % to 6.3 %.
+- [x] **Quiescent counterexample disclosed (§5.3.2).** `data/intel_l3_quiesced/`
+      returns 5/5/4 levels with the Silhouette counter at a modal 7 (std 1.25) — a
+      direct counterexample to Table 11's std 0.00 that was sitting unreported in the
+      repo. Its p5–p95 spread shows the run was contaminated; "quiescent" is an intent,
+      not a verified state. Now carried into §5.5 as a limitation of the counter.
+- [x] **Fixed PELT penalty removed from the analysis scripts.** `capacity_ci.py` and
+      `compare_curves.py --annotate` both used a hand-set `penalty=3.0` — the constant
+      §6 claims to have eliminated — to produce a headline capacity and the figure
+      annotations. Both now default to the productive automatic path; `--penalty`
+      remains for the sensitivity analyses. Verified identical on the ten-sweep data.
+- [x] **lmbench over-claim withdrawn.** "Inner hierarchy agrees to within ~20–25 %"
+      and "to within a fifth" were not supported: the point-wise ratio climbs 1.1×→1.9×
+      across the L2 band (Table 14). Only L1 genuinely agrees; the divergence starts
+      where a 4 KiB working set outruns L1-DTLB reach.
+- [x] **Inference transfer added (§5.3.1, Table 15).** The pipeline run on lmbench's
+      curve selects the correct k = 4 and recovers L1 (+16.7 %) and L2 (−10.0 %),
+      2/3 recall — validating the *inference layer*, not just the probe. Reproducible
+      as section 3 of `crosscheck_plateaus.py`.
+- [x] **Figure titles fixed.** Figs. 9 and 10 were both titled "Memory Latency Curves
+      Across Machines" with a "Machine" legend while comparing two *tools* and two
+      *load conditions* on one core. `compare_curves.py` now takes `--title` and
+      `--legend-title`.
+- [x] Mechanics: Appendix A test counts (37 tests / 36 passed, 1 skipped); dangling
+      cross-references (Contribution 1 → §5.5, Appendix A.2 → §6.4); MB → MiB;
+      "+15 % departure threshold" stated consistently; "builds on Linux" → "compiles
+      on Linux"; the "Note to the author before submission" block deleted; the
+      self-congratulatory "honest/honestly" register removed (7 instances → 0).
 
 ## Done
 - [x] WSS pointer-chase probe + runtime timer calibration (working method)
@@ -21,9 +70,9 @@ Windows (one test skips only on macOS).
 - [x] **Intel i5-13450HX validated** — 2 MiB huge-page run unmasks the 20 MiB L3
       (detected 13.9 MiB, 0.52 oct), recall/precision 3/3 = 100%, F1 1.00,
       Silhouette stable at 4 levels (std 0.00) across 3 sweeps
-- [x] **Sampling-density confound closed** — M1 re-measured at 5/10/20 points per
-      octave, Intel subsampled to 2.5/5/10; selected count invariant on both
-      (Table 10, `sampling_density_sweep.py`)
+- [x] **Sampling-density confound closed** — both machines re-measured end to end at
+      5/10/20 points per octave; selected count invariant on both
+      (Table 18, `sampling_density_sweep.py`)
 - [x] **§5 baseline contradiction resolved** — failure re-diagnosed as structural
       (write-before-read guarantees L1 residency), with the Intel `clflush`
       evidence promoted to Table 1 proving it fails on x86 too
@@ -52,7 +101,9 @@ Windows (one test skips only on macOS).
       `lmbench_curve.csv`, `lmbench_stride_curve.csv`, `data/crosscheck_intel.png`.
 
 ## Open on the M1
-- [ ] **Page size is never stated, and it is not 4 KiB.** macOS on Apple Silicon
+- [x] ~~**Page size is never stated, and it is not 4 KiB.**~~ Done: stated in §5.1
+      (Page column), §5.4 and §5.5.  Original note retained below for context.
+- [ ] ~~superseded~~ **Page size is never stated, and it is not 4 KiB.** macOS on Apple Silicon
       uses **16 KiB** base pages (`sysctl hw.pagesize` = 16384). The dissertation
       makes page size the decisive variable for the Intel L3 but never gives the
       M1's, so the cross-machine comparison is confounded by an unstated factor.
@@ -106,6 +157,28 @@ Windows (one test skips only on macOS).
 - [ ] Reflective essay (separate deliverable).
 - [ ] Port into the official QMUL template if required; add final word count.
 - [ ] Repo hygiene: the copyrighted Klimis PDF is still in the repo root.
+
+## Highest-value remaining experiments
+- [ ] **Run Auto-Echo itself inside the WSL2 environment lmbench was built in.** The
+      Linux path already compiles. Doing this matches OS, page size, virtualisation
+      layer and stride in one step, converting the §5.3.1 cross-check from
+      "confound identified" to "confound removed", and supplies the third measured
+      platform the evaluation lacks. Linux also has `MAP_HUGETLB`, so the huge-page
+      control need not stay Windows-only. No new hardware needed — highest value per
+      hour of any remaining item.
+- [ ] **Re-run lmbench at a 64-byte stride** (`lat_mem_rd -N 5 -t 512 64`) to match
+      the x86 line size. The 128 B value was inherited from the M1's line size.
+- [ ] **Dispersion self-diagnostic.** A contaminated run currently reports 7 levels
+      with no warning (§5.3.2). The condition is detectable from the within-plateau
+      p5–p95 spread the pipeline already computes. This is the most important
+      correctness gap left in the tool.
+- [ ] **Core-frequency measurement** (`APERF`/`MPERF` or an OS counter) to close
+      §5.3.2's account of the loaded latencies. The ~2.2× uniform rise exceeds this
+      SKU's 1.9× turbo range, so "DVFS" is stated as likely, not measured; the
+      invariant TSC cannot settle it.
+- [ ] **Inferential statistics.** Ten sweeps per condition would support a rank test
+      on the contention comparison and bootstrap CIs on capacities; currently only
+      effect size and min–max spread are reported.
 
 ## Medium
 - [ ] **Noise-robust onset rule.** The gated hybrid capacity estimator collapses on

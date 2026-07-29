@@ -14,7 +14,7 @@ each measured curve:
   * the Silhouette score of each partition, and hence whether exact optimisation
     would change the selected level count.
 
-It underpins the claim in Section 4.2.1 of the dissertation. Run:
+It underpins the claim in §3.2.1 of the dissertation. Run:
 
     python verify_kmeans_optimality.py
 """

@@ -8,7 +8,7 @@ therefore contend for shared-L3 *capacity* while leaving the probe's own core
 free, so a quiesced-vs-loaded probe comparison isolates L3 contention rather
 than core contention.
 
-This is the load used for the §6.3 L3-contention test. It is deliberately
+This is the load used for the §5.3.2 L3-contention test. It is deliberately
 simple and fully specified so an examiner can reproduce it: worker count,
 per-worker buffer size and the pinned CPU set are all printed at start-up.
 

@@ -11,8 +11,21 @@ Usage:
         --labels "Apple M1,Intel x86 Linux" --output compare_mountain.png
 
 If --labels is omitted, each curve is named after its parent directory.
-With --annotate, detected cache boundaries are marked per machine (requires the
-autoecho package to be importable).
+With --annotate, detected cache boundaries are marked per curve (requires the
+autoecho package to be importable). Boundaries come from the *productive*
+automatic path -- Silhouette count plus penalty-free Dynp localisation -- unless
+an explicit --penalty is given, so annotated figures agree with the dissertation's
+§5 tables by construction.
+
+The helper is also used for overlays that are not machine-vs-machine (Auto-Echo
+vs lmbench on one core; quiescent vs L3-loaded on one core). Pass --title and
+--legend-title in those cases so the figure does not claim to compare machines::
+
+    python compare_curves.py data/intel_i5_13450hx/wss_curve.csv \
+        data/intel_i5_13450hx/lmbench_curve.csv \
+        --labels "Auto-Echo (2 MiB pages),lmbench lat_mem_rd (-t / WSL2 4 KiB)" \
+        --title "Auto-Echo vs lmbench lat_mem_rd (Intel i5-13450HX, one core)" \
+        --legend-title "Tool" --annotate --output data/crosscheck_intel.png
 """
 import argparse
 import os
@@ -49,7 +62,16 @@ def main():
     ap.add_argument("--labels", default=None, help="comma-separated labels (one per CSV)")
     ap.add_argument("--output", default="compare_mountain.png", help="output image path")
     ap.add_argument("--annotate", action="store_true", help="mark detected cache boundaries per machine")
-    ap.add_argument("--penalty", type=float, default=3.0, help="change-point penalty when --annotate")
+    ap.add_argument("--penalty", type=float, default=None,
+                    help="change-point penalty when --annotate; omit to use the "
+                         "productive automatic path (Silhouette count + penalty-free "
+                         "Dynp localisation), matching the dissertation's §5 results")
+    ap.add_argument("--title", default="Auto-Echo: Memory Latency Curves Across Machines",
+                    help="figure title; override when the curves are not different "
+                         "machines (e.g. two tools, or two load conditions, on one core)")
+    ap.add_argument("--legend-title", default="Machine",
+                    help="legend heading; override to match --title (e.g. 'Tool', "
+                         "'Condition')")
     args = ap.parse_args()
 
     if args.labels:
@@ -96,9 +118,10 @@ def main():
     ax.set_yscale("log")
     ax.set_xlabel("Working-set size (KiB) [log2]", fontsize=11, fontweight="bold")
     ax.set_ylabel("Average access latency (ns) [log]", fontsize=11, fontweight="bold")
-    ax.set_title("Auto-Echo: Memory Latency Curves Across Machines", fontsize=13, fontweight="bold", pad=12)
+    ax.set_title(args.title, fontsize=13, fontweight="bold", pad=12)
     ax.grid(True, which="both", linestyle="-", alpha=0.15)
-    ax.legend(loc="upper left", frameon=True, framealpha=0.9, fontsize=10, title="Machine")
+    ax.legend(loc="upper left", frameon=True, framealpha=0.9, fontsize=10,
+              title=args.legend_title)
 
     plt.tight_layout()
     out_dir = os.path.dirname(os.path.abspath(args.output))

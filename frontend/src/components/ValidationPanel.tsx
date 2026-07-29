@@ -8,7 +8,11 @@ export function ValidationPanel({ machine }: { machine: Machine }) {
   const { metrics } = machine;
   const stats = [
     { label: "Recall", value: pct(metrics.recall), hint: "documented caches found" },
-    { label: "Precision", value: pct(metrics.precision), hint: "detected knees that are real" },
+    {
+      label: "Precision",
+      value: pct(metrics.precision),
+      hint: "detected knees that are real",
+    },
     { label: "F1", value: metrics.f1?.toFixed(2) ?? "—", hint: "harmonic mean" },
     {
       label: "Mean abs. error",
@@ -18,75 +22,45 @@ export function ValidationPanel({ machine }: { machine: Machine }) {
   ];
 
   return (
-    <section
-      className="rounded-lg border"
-      style={{ background: "var(--surface)", borderColor: "var(--hairline)" }}
-    >
-      <header
-        className="flex items-baseline justify-between gap-3 border-b px-4 py-3"
-        style={{ borderColor: "var(--hairline)" }}
-      >
-        <h2 className="display text-base font-semibold">Validation vs OS ground truth</h2>
-        <span className="eyebrow">Hungarian matching, factor-of-2 tolerance</span>
+    <section className="panel rise" style={{ "--i": 6 } as React.CSSProperties}>
+      <header className="panel__head">
+        <h2 className="panel__title">Validation vs OS ground truth</h2>
+        <span className="eyebrow">Hungarian matching · factor-of-2 tolerance</span>
       </header>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4">
-        {stats.map((s, i) => (
-          <div
-            key={s.label}
-            className="border-b px-4 py-3 lg:border-b-0"
-            style={{
-              borderColor: "var(--hairline)",
-              borderLeftWidth: i % 2 === 1 ? 1 : 0,
-              borderLeftStyle: "solid",
-            }}
-          >
+      <div className="stats">
+        {stats.map((s) => (
+          <div className="stat" key={s.label}>
             <p className="eyebrow">{s.label}</p>
-            <p className="mono mt-1 text-xl font-semibold">{s.value}</p>
-            <p className="mt-0.5 text-[11px]" style={{ color: "var(--ink-3)" }}>
-              {s.hint}
-            </p>
+            <p className="stat__v">{s.value}</p>
+            <p className="stat__hint">{s.hint}</p>
           </div>
         ))}
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="mono w-full min-w-[34rem] text-xs">
+      <div className="table-scroll">
+        <table className="table">
           <thead>
-            <tr
-              className="border-y text-left"
-              style={{ borderColor: "var(--hairline)", color: "var(--ink-3)" }}
-            >
-              <th className="px-4 py-2 font-medium">Cache</th>
-              <th className="px-4 py-2 font-medium">Ground truth</th>
-              <th className="px-4 py-2 font-medium">Detected</th>
-              <th className="px-4 py-2 text-right font-medium">Octaves</th>
-              <th className="px-4 py-2 text-right font-medium">Error</th>
-              <th className="px-4 py-2 text-right font-medium">Match</th>
+            <tr>
+              <th>Cache</th>
+              <th>Ground truth</th>
+              <th>Detected</th>
+              <th className="t-right">Octaves</th>
+              <th className="t-right">Error</th>
+              <th className="t-right">Match</th>
             </tr>
           </thead>
           <tbody>
             {machine.groundTruth.map((g) => (
-              <tr
-                key={g.cache}
-                className="border-b last:border-b-0"
-                style={{ borderColor: "var(--hairline)" }}
-              >
-                <td className="px-4 py-2 font-semibold">{g.cache}</td>
-                <td className="px-4 py-2" style={{ color: "var(--ink-2)" }}>
-                  {g.truthText}
-                </td>
-                <td className="px-4 py-2">{g.detectedText || "—"}</td>
-                <td className="px-4 py-2 text-right" style={{ color: "var(--ink-2)" }}>
-                  {g.errorOctaves?.toFixed(2) ?? "—"}
-                </td>
-                <td className="px-4 py-2 text-right">
+              <tr key={g.cache}>
+                <td className="t-name">{g.cache}</td>
+                <td className="t-dim">{g.truthText}</td>
+                <td>{g.detectedText || "—"}</td>
+                <td className="t-right t-dim">{g.errorOctaves?.toFixed(2) ?? "—"}</td>
+                <td className="t-right">
                   {g.errorPct != null ? formatSignedPct(g.errorPct) : "—"}
                 </td>
-                <td
-                  className="px-4 py-2 text-right font-semibold"
-                  style={{ color: g.match ? "var(--ok)" : "var(--warn)" }}
-                >
+                <td className={`t-right ${g.match ? "t-ok" : "t-warn"}`}>
                   {g.match ? "✓ yes" : "✗ no"}
                 </td>
               </tr>

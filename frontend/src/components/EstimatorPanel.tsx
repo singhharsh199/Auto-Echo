@@ -14,62 +14,41 @@ export function EstimatorPanel({ machine }: { machine: Machine }) {
   );
 
   return (
-    <section
-      className="rounded-lg border"
-      style={{ background: "var(--surface)", borderColor: "var(--hairline)" }}
-    >
-      <header
-        className="flex items-baseline justify-between gap-3 border-b px-4 py-3"
-        style={{ borderColor: "var(--hairline)" }}
-      >
-        <h2 className="display text-base font-semibold">Level-count estimators</h2>
+    <section className="panel rise" style={{ "--i": 7 } as React.CSSProperties}>
+      <header className="panel__head">
+        <h2 className="panel__title">Level-count estimators</h2>
         <span className="eyebrow">
           {machine.metrics.sweeps ?? "?"} sweeps · expected {expected}
         </span>
       </header>
 
-      <div className="overflow-x-auto">
-        <table className="mono w-full min-w-[32rem] text-xs">
+      <div className="table-scroll">
+        <table className="table">
           <thead>
-            <tr
-              className="border-b text-left"
-              style={{ borderColor: "var(--hairline)", color: "var(--ink-3)" }}
-            >
-              <th className="px-4 py-2 font-medium">Method</th>
-              <th className="px-4 py-2 text-right font-medium">Mean</th>
-              <th className="px-4 py-2 text-right font-medium">Std</th>
-              <th className="px-4 py-2 text-right font-medium">Modal</th>
-              <th className="px-4 py-2 text-right font-medium">Count</th>
+            <tr>
+              <th>Method</th>
+              <th className="t-right">Mean</th>
+              <th className="t-right">Std</th>
+              <th className="t-right">Modal</th>
+              <th className="t-right">Count</th>
             </tr>
           </thead>
           <tbody>
             {machine.comparison.map((c) => (
-              <tr
-                key={c.method}
-                className="border-b last:border-b-0"
-                style={{ borderColor: "var(--hairline)" }}
-              >
-                <td className="px-4 py-2">
-                  <span className="font-semibold">{c.method}</span>
-                  {c.std === 0 && (
-                    <span className="ml-2 text-[10px]" style={{ color: "var(--ink-3)" }}>
-                      stable
-                    </span>
-                  )}
+              <tr key={c.method}>
+                <td>
+                  <span className="t-name">{c.method}</span>
+                  {c.std === 0 && <span className="tag">stable</span>}
                 </td>
-                <td className="px-4 py-2 text-right">{c.meanLevels.toFixed(2)}</td>
-                <td
-                  className="px-4 py-2 text-right"
-                  style={{ color: c.std === 0 ? "var(--ok)" : "var(--warn)" }}
-                >
+                <td className="t-right">{c.meanLevels.toFixed(2)}</td>
+                <td className={`t-right ${c.std === 0 ? "t-ok" : "t-warn"}`}>
                   {c.std.toFixed(2)}
                 </td>
-                <td className="px-4 py-2 text-right">{c.modal}</td>
-                <td
-                  className="px-4 py-2 text-right font-semibold"
-                  style={{ color: c.countOk ? "var(--ok)" : "var(--warn)" }}
-                >
-                  {c.countOk ? "✓ ok" : `✗ ${c.modal - c.expected > 0 ? "+" : ""}${c.modal - c.expected}`}
+                <td className="t-right">{c.modal}</td>
+                <td className={`t-right ${c.countOk ? "t-ok" : "t-warn"}`}>
+                  {c.countOk
+                    ? "✓ ok"
+                    : `✗ ${c.modal - c.expected > 0 ? "+" : ""}${c.modal - c.expected}`}
                 </td>
               </tr>
             ))}
@@ -77,31 +56,25 @@ export function EstimatorPanel({ machine }: { machine: Machine }) {
         </table>
       </div>
 
-      <div className="border-t px-4 py-3" style={{ borderColor: "var(--hairline)" }}>
-        <p className="eyebrow mb-2">Change-point penalty sensitivity</p>
-        <p className="mb-2 text-[11px]" style={{ color: "var(--ink-3)" }}>
+      <div className="panel__body" style={{ borderTop: "1px solid var(--hairline)" }}>
+        <p className="eyebrow">Change-point penalty sensitivity</p>
+        <p className="panel__sub" style={{ marginBottom: "var(--s-3)" }}>
           Level count as the manual PELT penalty varies — the knob the automatic,
           penalty-free method removes.
         </p>
-        <div className="flex flex-wrap gap-1.5">
+        <div className="ladder">
           {machine.penalty.map((p) => (
             <div
               key={p.penalty}
-              className="mono flex flex-col items-center rounded border px-2 py-1"
-              style={{
-                borderColor: "var(--hairline)",
-                background: "var(--surface-2)",
-              }}
+              className={`rung${p.levels === expected ? " rung--hit" : ""}`}
               title={`penalty ${p.penalty} → ${p.levels} levels`}
             >
-              <span className="text-[10px]" style={{ color: "var(--ink-3)" }}>
-                {p.penalty}
-              </span>
+              <span className="rung__k">{p.penalty}</span>
               <span
-                className="text-sm font-semibold"
+                className="rung__v"
                 style={{
                   color: p.levels === expected ? "var(--ok)" : "var(--ink-2)",
-                  opacity: 0.4 + 0.6 * (p.levels / maxLevels),
+                  opacity: 0.45 + 0.55 * (p.levels / maxLevels),
                 }}
               >
                 {p.levels}

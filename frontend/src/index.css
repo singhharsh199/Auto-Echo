@@ -1,63 +1,154 @@
-@import "tailwindcss";
+/* ============================================================================
+   Auto-Echo — design system
+   ----------------------------------------------------------------------------
+   Vanilla CSS, no framework. Everything downstream reads from the custom
+   properties in this file, so a hue change here propagates to the whole app
+   including the Recharts SVG (which accepts `var()` in stroke/fill).
 
-/*
- * Palette: the project's own Okabe-Ito set (see `compare_curves.py`), so the
- * dashboard reads as the same system as the dissertation's figures. Neutrals
- * carry a slight blue bias toward the accent rather than being pure grey.
- *
- * Series hues are identical in both themes -- identity must not shift when the
- * theme does. Only the grounds and ink change.
- */
+   Colour is authored as HSL *channel triplets* (`--x-hsl: 265 88% 68%`) rather
+   than finished colours. That is what lets any component derive a translucent
+   variant on demand -- `hsl(var(--accent-hsl) / 0.14)` -- without a second
+   variable per opacity, which is how glass surfaces, focus glows and chart
+   fills stay in step with one palette.
+   ========================================================================= */
+
+/* ---------------------------------------------------------------- tokens -- */
 :root {
   color-scheme: dark;
 
-  --bg: #0c1016;
-  --surface: #141a23;
-  --surface-2: #1a212c;
-  --hairline: #26303e;
-  --hairline-strong: #35424f;
+  /* --- Hue spine -----------------------------------------------------------
+     Two accents a third of the wheel apart: a violet primary and a cyan
+     secondary. Everything gradient-like in the UI runs between these two, which
+     is what gives the interface one identity instead of a set of loose colours. */
+  --accent-hsl: 265 88% 68%; /* violet   — primary actions, active state    */
+  --accent-2-hsl: 187 95% 55%; /* cyan     — secondary accent, data emphasis  */
+  --accent-3-hsl: 322 85% 66%; /* magenta  — tertiary, used sparingly         */
 
-  --ink: #e7edf5;
-  --ink-2: #9dadc0;
-  --ink-3: #6b7c91;
+  --accent: hsl(var(--accent-hsl));
+  --accent-2: hsl(var(--accent-2-hsl));
+  --accent-3: hsl(var(--accent-3-hsl));
 
-  --accent: #0072b2;
+  /* --- Grounds -------------------------------------------------------------
+     Not pure black. A common cause of a "cheap dark mode" is #000 plus pure
+     grey; these carry the accent's hue at low saturation so the greys feel
+     lit by the same light as the accents. */
+  --bg-hsl: 240 30% 4%;
+  --bg: hsl(var(--bg-hsl));
+  --bg-elevated: hsl(240 26% 7%);
 
-  --ok: #009e73;
-  --warn: #e69f00;
-  --idle: #6b7c91;
+  --surface-hsl: 240 22% 10%;
+  --surface: hsl(var(--surface-hsl));
+  --surface-2: hsl(240 20% 13%);
+  --surface-3: hsl(240 18% 17%);
 
-  --grid: rgba(157, 173, 192, 0.12);
+  /* Glass: translucent so the ambient gradient glows read *through* panels.
+     Paired with --blur below; both are needed or the effect collapses. */
+  --glass: hsl(240 24% 9% / 0.62);
+  --glass-strong: hsl(240 24% 8% / 0.86);
+  --glass-light: hsl(0 0% 100% / 0.03);
 
-  /* Cache-level bands, mirroring memory_mountain.png's shaded regions. Carried
-     heavier on the dark ground, where a 10% tint disappears entirely. */
-  --band-l1: rgba(213, 94, 0, 0.22);
-  --band-l2: rgba(0, 158, 115, 0.2);
-  --band-l3: rgba(0, 114, 178, 0.26);
-  --band-dram: rgba(230, 159, 0, 0.17);
+  --blur: 20px;
+  --blur-lg: 40px;
+
+  /* --- Hairlines -----------------------------------------------------------
+     Light-on-dark borders read better as white at low alpha than as a grey
+     colour, because they stay correct over any surface they sit on. */
+  --hairline: hsl(0 0% 100% / 0.07);
+  --hairline-strong: hsl(0 0% 100% / 0.13);
+  --hairline-accent: hsl(var(--accent-hsl) / 0.35);
+
+  /* --- Ink ---------------------------------------------------------------- */
+  --ink: hsl(240 30% 97%);
+  --ink-2: hsl(240 14% 72%);
+  --ink-3: hsl(240 12% 52%);
+  --ink-4: hsl(240 12% 38%);
+
+  /* --- Semantic ----------------------------------------------------------- */
+  --ok-hsl: 158 78% 48%;
+  --warn-hsl: 38 96% 60%;
+  --bad-hsl: 352 88% 62%;
+  --ok: hsl(var(--ok-hsl));
+  --warn: hsl(var(--warn-hsl));
+  --bad: hsl(var(--bad-hsl));
+
+  /* --- Data series --------------------------------------------------------
+     Per-machine identity. Deliberately *not* taken from `machine.color` in the
+     dataset (which carries the dissertation's muted Okabe-Ito print values) so
+     the on-screen curves can be vivid; `lib/series.ts` maps machine id -> token
+     and falls back to the dataset colour for any machine added later.
+
+     The pair is still safe under the common colour-vision deficiencies: cyan
+     and amber separate on *luminance* as well as hue, which is the property
+     that made the original blue/orange pair safe, so the chart does not rely
+     on hue discrimination alone. */
+  --series-1-hsl: 187 95% 55%; /* Apple M1  — cyan  */
+  --series-2-hsl: 33 100% 60%; /* Intel     — amber */
+  --series-3-hsl: 322 85% 66%; /* spare     — magenta */
+  --series-1: hsl(var(--series-1-hsl));
+  --series-2: hsl(var(--series-2-hsl));
+  --series-3: hsl(var(--series-3-hsl));
+
+  /* --- Chart furniture ---------------------------------------------------- */
+  --grid: hsl(240 20% 70% / 0.08);
+  --axis: hsl(0 0% 100% / 0.12);
+
+  /* Cache-level bands. Hue-coded per level and kept faint: they are a backdrop
+     for the curve, not a competing layer. */
+  --band-l1: hsl(265 88% 68% / 0.14);
+  --band-l2: hsl(187 95% 55% / 0.12);
+  --band-l3: hsl(322 85% 66% / 0.13);
+  --band-dram: hsl(33 100% 60% / 0.09);
+
+  /* --- Type -------------------------------------------------------------- */
+  --font-display: "Outfit", "SF Pro Display", system-ui, -apple-system, sans-serif;
+  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", SFMono-Regular,
+    "Cascadia Mono", Menlo, Consolas, monospace;
+
+  /* --- Space: a 4px base, so vertical rhythm is consistent everywhere ----- */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-5: 1.25rem;
+  --s-6: 1.5rem;
+  --s-8: 2rem;
+  --s-10: 2.5rem;
+  --s-12: 3rem;
+
+  /* --- Radius ------------------------------------------------------------ */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+  --r-full: 999px;
+
+  /* --- Elevation ----------------------------------------------------------
+     Two stacked shadows (a tight contact shadow plus a wide ambient one) read
+     as real depth where a single blur reads as a grey halo. */
+  --shadow-sm: 0 1px 2px hsl(240 40% 2% / 0.4);
+  --shadow-md: 0 2px 6px hsl(240 40% 2% / 0.4), 0 8px 24px hsl(240 40% 2% / 0.3);
+  --shadow-lg: 0 4px 12px hsl(240 40% 2% / 0.5), 0 24px 60px hsl(240 40% 2% / 0.45);
+  --shadow-glow: 0 0 0 1px hsl(var(--accent-hsl) / 0.3),
+    0 8px 32px hsl(var(--accent-hsl) / 0.18);
+
+  /* --- Motion -------------------------------------------------------------
+     One easing for entrances/exits and a springier one for interaction, so
+     hovers feel responsive while loads feel calm. */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --t-fast: 140ms;
+  --t: 240ms;
+  --t-slow: 420ms;
+
+  --max-w: 1440px;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color-scheme: light;
-
-    --bg: #f3f6fa;
-    --surface: #ffffff;
-    --surface-2: #f7f9fc;
-    --hairline: #dde4ed;
-    --hairline-strong: #c3cedb;
-
-    --ink: #101720;
-    --ink-2: #52616f;
-    --ink-3: #7c8998;
-
-    --grid: rgba(16, 23, 32, 0.1);
-
-    --band-l1: rgba(213, 94, 0, 0.11);
-    --band-l2: rgba(0, 158, 115, 0.11);
-    --band-l3: rgba(0, 114, 178, 0.13);
-    --band-dram: rgba(230, 159, 0, 0.12);
-  }
+/* ------------------------------------------------------------------ reset -- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 html,
@@ -70,50 +161,1165 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font-family:
-    system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
 }
 
-/* Data and identifiers wear a mono face with lining figures; the dissertation
-   is a measurement document and the numbers should line up in columns. */
+/* Ambient light. Two fixed radial glows behind all content give the flat dark
+   ground depth and are what the glass panels actually blur. `attachment: fixed`
+   keeps them still while the page scrolls, so they read as lighting rather than
+   as decoration that moves with the content. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      ellipse 80% 55% at 12% -10%,
+      hsl(var(--accent-hsl) / 0.16),
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 70% 50% at 90% 8%,
+      hsl(var(--accent-2-hsl) / 0.1),
+      transparent 62%
+    ),
+    radial-gradient(
+      ellipse 90% 60% at 50% 108%,
+      hsl(var(--accent-3-hsl) / 0.07),
+      transparent 65%
+    );
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+/* Selection picks up the accent instead of the OS blue, which is one of the
+   details that separates a designed dark UI from a themed one. */
+::selection {
+  background: hsl(var(--accent-hsl) / 0.35);
+  color: var(--ink);
+}
+
+/* Scrollbars: styled in both the WebKit and the standard syntax, since Firefox
+   implements only the latter and WebKit only the former. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(0 0% 100% / 0.16) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(0 0% 100% / 0.14);
+  border-radius: var(--r-full);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--accent-hsl) / 0.5);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+p {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+/* --------------------------------------------------------------- utilities -- */
 .mono {
-  font-family:
-    ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", "Roboto Mono",
-    Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  font-feature-settings: "zero" 1; /* slashed zero: 0 vs O in measurements */
 }
 
 .num {
   font-variant-numeric: tabular-nums;
 }
 
-/* Section headings echo the dissertation's serif rather than the UI sans. */
 .display {
-  font-family:
-    "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia,
-    serif;
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
 }
 
 .eyebrow {
   text-transform: uppercase;
-  letter-spacing: 0.09em;
-  font-size: 0.6875rem;
+  letter-spacing: 0.12em;
+  font-size: 0.625rem;
   font-weight: 600;
+  color: var(--ink-3);
+  font-family: var(--font-ui);
+}
+
+/* Gradient text for the one headline that carries the brand. -webkit- prefixes
+   are required: `background-clip: text` is still prefixed in WebKit. */
+.gradient-text {
+  background: linear-gradient(
+    100deg,
+    var(--ink) 0%,
+    hsl(var(--accent-hsl) / 0.95) 45%,
+    var(--accent-2) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ------------------------------------------------------------------ focus -- */
+:where(button, input, select, a, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* ------------------------------------------------------------- animations -- */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sheen {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 hsl(var(--ok-hsl) / 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 6px hsl(var(--ok-hsl) / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 hsl(var(--ok-hsl) / 0);
+  }
+}
+
+/* Entrance. `--i` is set inline per item to stagger a group; `both` holds the
+   pre-animation state so nothing flashes at full opacity before starting. */
+.rise {
+  animation: rise var(--t-slow) var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 60ms);
+}
+
+.fade {
+  animation: fade var(--t-slow) var(--ease) both;
+  animation-delay: calc(var(--i, 0) * 60ms);
+}
+
+/* ------------------------------------------------------------------ shell -- */
+.app {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell {
+  width: 100%;
+  max-width: var(--max-w);
+  margin-inline: auto;
+  padding-inline: clamp(var(--s-4), 3vw, var(--s-8));
+}
+
+/* ----------------------------------------------------------------- header -- */
+.masthead {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(160%);
+  backdrop-filter: blur(var(--blur)) saturate(160%);
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* Hairline of accent light along the very bottom edge of the sticky bar --
+   separates it from scrolling content without a heavy border. */
+.masthead::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    hsl(var(--accent-hsl) / 0.5),
+    hsl(var(--accent-2-hsl) / 0.4),
+    transparent
+  );
+}
+
+.masthead__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding-block: var(--s-4);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+/* The mark: a gradient tile with an inner glass highlight. */
+.brand__mark {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: var(--r-md);
+  background: linear-gradient(140deg, var(--accent), var(--accent-2));
+  box-shadow:
+    inset 0 1px 0 hsl(0 0% 100% / 0.3),
+    0 4px 16px hsl(var(--accent-hsl) / 0.35);
+}
+
+.brand__mark svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
+.brand__text {
+  min-width: 0;
+}
+
+.brand__title {
+  font-size: 1.125rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------- nav / segs -- */
+/* Segmented control. The moving parts are the items; the track is glass so the
+   ambient glow shows through. */
+.segmented {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1);
+  padding: var(--s-1);
+  border-radius: var(--r-md);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(var(--blur));
+  backdrop-filter: blur(var(--blur));
+  border: 1px solid var(--hairline);
+}
+
+.seg {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease);
+}
+
+.seg:hover {
+  color: var(--ink);
+  background: hsl(0 0% 100% / 0.05);
+}
+
+.seg:active {
+  transform: scale(0.97);
+}
+
+.seg[aria-pressed="true"] {
+  color: var(--ink);
+  background: linear-gradient(
+    140deg,
+    hsl(var(--accent-hsl) / 0.22),
+    hsl(var(--accent-2-hsl) / 0.14)
+  );
+  box-shadow:
+    inset 0 1px 0 hsl(0 0% 100% / 0.12),
+    0 2px 10px hsl(var(--accent-hsl) / 0.2);
+}
+
+/* Series dot. Its colour comes from an inline `--dot` so one rule serves every
+   machine and the glow always matches the dot. */
+.seg__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-full);
+  background: var(--dot, var(--accent));
+  box-shadow: 0 0 8px var(--dot, var(--accent));
+  flex-shrink: 0;
+}
+
+/* ------------------------------------------------------------------ cards -- */
+.panel {
+  position: relative;
+  border-radius: var(--r-lg);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(140%);
+  backdrop-filter: blur(var(--blur)) saturate(140%);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+/* Top-edge specular highlight: the single detail that most reads as "glass"
+   rather than "translucent box". Fades out toward the sides. */
+.panel::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    hsl(0 0% 100% / 0.14) 20%,
+    hsl(0 0% 100% / 0.14) 80%,
+    transparent
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+.panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-5);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.panel__title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.panel__sub {
+  margin-top: 2px;
+  font-size: 0.75rem;
+  color: var(--ink-3);
+  max-width: 62ch;
+}
+
+.panel__body {
+  padding: var(--s-4) var(--s-5);
+}
+
+.panel__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-5);
+  border-top: 1px solid var(--hairline);
+  background: hsl(0 0% 100% / 0.015);
+}
+
+/* ------------------------------------------------------------ hero / meta -- */
+.hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-6);
+  padding: var(--s-5);
+}
+
+.hero__id {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+
+.hero__name {
+  font-size: 1.375rem;
+  font-weight: 700;
+}
+
+/* Vertical rule between facts, drawn as a border so it collapses on wrap. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-6);
+  margin-left: auto;
+}
+
+.fact {
+  min-width: 0;
+}
+
+.fact__v {
+  margin-top: 2px;
+  font-size: 0.8125rem;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ pills -- */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding: 3px var(--s-2);
+  border-radius: var(--r-full);
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.pill--ok {
+  color: var(--ok);
+  background: hsl(var(--ok-hsl) / 0.12);
+  border-color: hsl(var(--ok-hsl) / 0.28);
+}
+
+.pill--warn {
+  color: var(--warn);
+  background: hsl(var(--warn-hsl) / 0.12);
+  border-color: hsl(var(--warn-hsl) / 0.28);
+}
+
+.pill--muted {
+  color: var(--ink-2);
+  background: hsl(0 0% 100% / 0.05);
+  border-color: var(--hairline);
+  font-family: var(--font-mono);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.pill__led {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--r-full);
+  background: currentColor;
+  animation: pulse-ring 2.4s var(--ease) infinite;
+}
+
+/* ------------------------------------------------------------ level cards -- */
+.levels {
+  display: grid;
+  gap: var(--s-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 235px), 1fr));
+}
+
+.level {
+  position: relative;
+  padding: var(--s-5);
+  border-radius: var(--r-lg);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(var(--blur));
+  backdrop-filter: blur(var(--blur));
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  transition:
+    transform var(--t) var(--ease-out),
+    border-color var(--t) var(--ease),
+    box-shadow var(--t) var(--ease);
+}
+
+/* The level's own hue, injected inline as --tint, washes up from the bottom. */
+.level::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(160deg, transparent 30%, var(--tint, transparent));
+  opacity: 0.9;
+  pointer-events: none;
+  transition: opacity var(--t) var(--ease);
+}
+
+.level::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--edge, var(--accent)), transparent);
+  opacity: 0.7;
+  transition: opacity var(--t) var(--ease);
+}
+
+.level:hover {
+  transform: translateY(-3px);
+  border-color: var(--hairline-strong);
+  box-shadow: var(--shadow-lg);
+}
+
+.level:hover::after {
+  opacity: 1;
+}
+
+.level:hover::before {
+  opacity: 1;
+}
+
+.level > * {
+  position: relative;
+  z-index: 1;
+}
+
+.level__top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+.level__name {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+/* The headline number. `clamp` keeps it large but never overflowing a narrow
+   card, and tabular figures stop it jittering between machines. */
+.level__cap {
+  margin-top: var(--s-3);
+  font-family: var(--font-mono);
+  font-size: clamp(1.35rem, 2.4vw, 1.75rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.level__dl {
+  margin: var(--s-4) 0 0;
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.level__row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.level__row dt {
   color: var(--ink-3);
 }
 
-:where(button, input, select, a):focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 4px;
+.level__row dd {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
 }
 
+/* ------------------------------------------------------------------ chart -- */
+.chart {
+  position: relative;
+  height: clamp(400px, 54vh, 660px);
+  width: 100%;
+  padding: var(--s-4) var(--s-2) 0;
+}
+
+/* Plot-area wash, sitting behind the SVG so the curve reads against a subtle
+   vertical gradient rather than flat glass. Full-bleed with no radius: an inset
+   rectangle here reads as a stray box because its edges land near, but not on,
+   the axes that Recharts computes at runtime. */
+.chart::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    hsl(var(--accent-hsl) / 0.05),
+    transparent 45%,
+    hsl(var(--accent-2-hsl) / 0.05)
+  );
+  pointer-events: none;
+}
+
+.chart .recharts-wrapper {
+  position: relative;
+  z-index: 1;
+}
+
+/* Recharts draws its own focus rectangle on the surface; suppress it and keep
+   our own focus ring convention. */
+.chart .recharts-surface:focus {
+  outline: none;
+}
+
+/* --------------------------------------------------------------- tooltips -- */
+.tip {
+  min-width: 190px;
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-md);
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(180%);
+  backdrop-filter: blur(var(--blur-lg)) saturate(180%);
+  border: 1px solid var(--hairline-strong);
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  animation: fade var(--t-fast) var(--ease) both;
+}
+
+.tip__wss {
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  padding-bottom: var(--s-2);
+  margin-bottom: var(--s-2);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.tip__row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding-block: 2px;
+}
+
+.tip__dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: var(--r-full);
+  background: var(--dot);
+  box-shadow: 0 0 6px var(--dot);
+}
+
+.tip__name {
+  color: var(--ink-2);
+}
+
+.tip__val {
+  margin-left: auto;
+  padding-left: var(--s-3);
+  font-weight: 600;
+}
+
+.tip__meta {
+  margin-top: var(--s-2);
+  padding-top: var(--s-2);
+  border-top: 1px solid var(--hairline);
+  color: var(--ink-3);
+}
+
+/* ----------------------------------------------------------------- toggle -- */
+/* A switch built on a real checkbox: the input stays in the accessibility tree
+   and keeps keyboard behaviour, and only its box is restyled. */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.75rem;
+  color: var(--ink-3);
+  transition: color var(--t-fast) var(--ease);
+}
+
+.switch:hover {
+  color: var(--ink);
+}
+
+.switch input {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  width: 32px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: var(--r-full);
+  background: hsl(0 0% 100% / 0.08);
+  border: 1px solid var(--hairline);
+  position: relative;
+  cursor: pointer;
+  transition:
+    background var(--t) var(--ease),
+    border-color var(--t) var(--ease);
+}
+
+.switch input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--r-full);
+  background: var(--ink-3);
+  transition:
+    transform var(--t) var(--ease-out),
+    background var(--t) var(--ease);
+}
+
+.switch input:checked {
+  background: linear-gradient(120deg, var(--accent), var(--accent-2));
+  border-color: transparent;
+}
+
+.switch input:checked::after {
+  transform: translateX(14px);
+  background: hsl(0 0% 100% / 0.98);
+}
+
+.switch:has(input:checked) {
+  color: var(--ink);
+}
+
+/* --------------------------------------------------------------- run chips -- */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.chip {
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--hairline);
+  background: hsl(0 0% 100% / 0.03);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  cursor: pointer;
+  transition:
+    color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease);
+}
+
+.chip:hover {
+  color: var(--ink);
+  border-color: var(--hairline-strong);
+  background: hsl(0 0% 100% / 0.07);
+}
+
+.chip:active {
+  transform: scale(0.96);
+}
+
+.chip[aria-pressed="true"] {
+  color: var(--ink);
+  border-color: var(--chip, var(--accent));
+  background: hsl(0 0% 100% / 0.06);
+  box-shadow: 0 0 12px hsl(var(--accent-hsl) / 0.15);
+}
+
+.link-btn {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--ink-3);
+  font-size: 0.6875rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color var(--t-fast) var(--ease);
+}
+
+.link-btn:hover {
+  color: var(--accent-2);
+}
+
+/* ---------------------------------------------------------------- legend -- */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-4);
+  font-size: 0.6875rem;
+}
+
+.legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--ink-2);
+}
+
+.legend__swatch {
+  width: 16px;
+  height: 3px;
+  border-radius: var(--r-full);
+  background: var(--dot);
+  box-shadow: 0 0 8px var(--dot);
+}
+
+/* ------------------------------------------------------------------- stats -- */
+/* Fixed column counts rather than auto-fit: the divider rules below need to know
+   which cells start a row, which `auto-fit` deliberately makes indeterminate. */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+}
+
+@media (min-width: 720px) {
+  .stats {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* Dividers drawn with inset box-shadow rather than borders, so they never add to
+   the box and cannot shift the grid. */
+.stat {
+  padding: var(--s-4) var(--s-5);
+  box-shadow: inset 1px 0 0 var(--hairline), inset 0 -1px 0 var(--hairline);
+  transition: background var(--t-fast) var(--ease);
+}
+
+/* Row-leading cells carry no left divider. */
+.stat:nth-child(2n + 1) {
+  box-shadow: inset 0 -1px 0 var(--hairline);
+}
+
+@media (min-width: 720px) {
+  .stat:nth-child(2n + 1) {
+    box-shadow: inset 1px 0 0 var(--hairline), inset 0 -1px 0 var(--hairline);
+  }
+  .stat:nth-child(4n + 1) {
+    box-shadow: inset 0 -1px 0 var(--hairline);
+  }
+}
+
+.stat:hover {
+  background: hsl(0 0% 100% / 0.025);
+}
+
+.stat__v {
+  margin-top: var(--s-1);
+  font-family: var(--font-mono);
+  font-size: 1.375rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(120deg, var(--ink), hsl(var(--accent-2-hsl) / 0.85));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.stat__hint {
+  margin-top: 2px;
+  font-size: 0.6875rem;
+  color: var(--ink-4);
+}
+
+/* ------------------------------------------------------------------ table -- */
+/* Contain horizontal overflow so the page body never scrolls sideways, and fade
+   the right edge while there is more table to reach. The mask is attached to the
+   scroller's background, so it slides out of view once scrolled to the end. */
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  background:
+    linear-gradient(
+        to left,
+        hsl(var(--bg-hsl) / 0.85),
+        hsl(var(--bg-hsl) / 0)
+      )
+      right center / 36px 100% no-repeat;
+  /* `local` ties the gradient to the scrolled content, so the hint slides away
+     once the reader reaches the end of the table. */
+  background-attachment: local;
+}
+
+.table {
+  width: 100%;
+  min-width: 34rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  padding: var(--s-2) var(--s-5);
+  text-align: left;
+  font-weight: 500;
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-4);
+  background: hsl(240 24% 9% / 0.9);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+
+.table tbody td {
+  padding: var(--s-3) var(--s-5);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* Row hover: tint plus an accent bar grown from the left edge via box-shadow,
+   which needs no extra element and cannot shift the layout. */
+.table tbody tr {
+  transition: background var(--t-fast) var(--ease);
+}
+
+.table tbody tr:hover {
+  background: hsl(0 0% 100% / 0.035);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.t-right {
+  text-align: right;
+}
+
+.t-name {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.t-dim {
+  color: var(--ink-2);
+}
+
+.t-ok {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.t-warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.tag {
+  margin-left: var(--s-2);
+  padding: 1px var(--s-1);
+  border-radius: 4px;
+  font-size: 0.5625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ok);
+  background: hsl(var(--ok-hsl) / 0.12);
+}
+
+/* -------------------------------------------------------- penalty ladder -- */
+.ladder {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.rung {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 42px;
+  padding: var(--s-2);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--hairline);
+  background: hsl(0 0% 100% / 0.03);
+  font-family: var(--font-mono);
+  transition:
+    transform var(--t-fast) var(--ease-out),
+    border-color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease);
+}
+
+.rung:hover {
+  transform: translateY(-2px);
+  border-color: var(--hairline-strong);
+  background: hsl(0 0% 100% / 0.06);
+}
+
+.rung--hit {
+  border-color: hsl(var(--ok-hsl) / 0.35);
+  background: hsl(var(--ok-hsl) / 0.08);
+}
+
+.rung__k {
+  font-size: 0.625rem;
+  color: var(--ink-4);
+}
+
+.rung__v {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------------ grids -- */
+/* `align-items: start` so each panel takes its natural height. Stretching them
+   to a shared height leaves a large void under whichever table is shorter. */
+.duo {
+  display: grid;
+  gap: var(--s-5);
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+@media (min-width: 1180px) {
+  .duo {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+main.shell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+  padding-block: var(--s-6) var(--s-10);
+  flex: 1;
+}
+
+/* ---------------------------------------------------------------- colophon -- */
+.colophon {
+  font-size: 0.6875rem;
+  color: var(--ink-4);
+  line-height: 1.7;
+  max-width: 90ch;
+}
+
+.colophon .mono {
+  color: var(--ink-3);
+}
+
+/* ---------------------------------------------------------------- narrow -- */
+@media (max-width: 640px) {
+  .masthead__inner {
+    padding-block: var(--s-3);
+  }
+  .facts {
+    margin-left: 0;
+    gap: var(--s-4);
+  }
+  .panel__head,
+  .panel__body,
+  .panel__foot,
+  .hero {
+    padding-inline: var(--s-4);
+  }
+  .table thead th,
+  .table tbody td {
+    padding-inline: var(--s-4);
+  }
+}
+
+/* ------------------------------------------------------- reduced motion -- */
+/* Entrance animations are removed outright rather than shortened, so nothing
+   moves; hover feedback degrades to colour only. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .level:hover,
+  .rung:hover,
+  .chip:active,
+  .seg:active {
+    transform: none;
   }
 }

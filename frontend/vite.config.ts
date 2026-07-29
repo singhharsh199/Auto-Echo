@@ -1,7 +1,8 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
 
+// The UI is authored in vanilla CSS (src/index.css); no CSS framework is used,
+// so no Tailwind plugin is registered here.
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react()],
 });

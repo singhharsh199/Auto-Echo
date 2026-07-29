@@ -4,7 +4,27 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#07080f" />
+    <meta
+      name="description"
+      content="Auto-Echo — automated discovery of memory-hierarchy latency patterns from user space."
+    />
+    <title>Auto-Echo · Memory Hierarchy Discovery</title>
+
+    <!--
+      Typography: Outfit (geometric display), Inter (UI text) and JetBrains Mono
+      (measurements, with tabular figures so columns of numbers align). Preconnect
+      first so the font fetch overlaps the module graph; `display=swap` keeps first
+      paint immediate, and the CSS font stacks name local fallbacks so the app is
+      still legible with no network.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
   </head>
   <body>
     <div id="root"></div>

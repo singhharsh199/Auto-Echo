@@ -121,7 +121,7 @@ def run_wss(args):
 
 def run_samples(args):
     """Legacy sample-based pipeline, retained as the documented naive baseline
-    (write-before-read guarantees L1 residency -- see dissertation Section 5)."""
+    (write-before-read guarantees L1 residency -- see dissertation §4)."""
     try:
         from autoecho.probe import collect
         from autoecho.preprocessing import preprocess_pipeline
@@ -150,7 +150,7 @@ def run_samples(args):
 
 
 def run_lof(args):
-    """Reproduce the dissertation §5 evidence that the naive baseline's failure is
+    """Reproduce the dissertation §4 evidence that the naive baseline's failure is
     structural: LOF removes a fraction of points but the survivors stay pinned to
     integer timer-tick multiples, so filtering cannot recover the hierarchy."""
     try:
@@ -174,16 +174,18 @@ def main():
         description="Auto-Echo: Automated Discovery of Memory Hierarchy Latency Patterns")
     parser.add_argument("--method", choices=["wss", "samples", "lof-check"], default="wss",
                         help="wss = pointer-chase sweep (primary); samples = naive "
-                             "baseline; lof-check = reproduce the §5 LOF-mitigation evidence")
+                             "baseline; lof-check = reproduce the §4 LOF-mitigation evidence")
     parser.add_argument("--output-dir", type=str, default="data")
     # WSS options
     parser.add_argument("--max-mb", type=_positive_int, default=256, help="max working-set size (MiB)")
-    parser.add_argument("--capacity-method", choices=["edge", "onset", "hybrid"],
+    parser.add_argument("--capacity-method",
+                        choices=["edge", "onset", "hybrid", "midpoint"],
                         default="edge",
                         help="cache-capacity estimator: edge (default, stable, biased "
                              "+16-23%%); hybrid (onset on flat plateaus, edge otherwise "
                              "-- recovers a sharp knee like the M1 L1 exactly); onset "
-                             "(exact on flat plateaus, unstable on sloping ones)")
+                             "(exact on flat plateaus, unstable on sloping ones); "
+                             "midpoint (geometric mean of last-fit and first-miss sizes)")
     parser.add_argument("--hops", type=_positive_int, default=1 << 20, help="min pointer-chase hops per timing window")
     parser.add_argument("--repeats", type=_positive_int, default=5, help="repeats per size (minimum is taken)")
     parser.add_argument("--seed", type=int, default=42, help="RNG seed for reproducible permutations")

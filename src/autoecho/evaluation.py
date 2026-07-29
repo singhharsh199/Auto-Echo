@@ -105,7 +105,7 @@ def compare_methods(
 
 
 def evaluate_lof_mitigation(penalty: float = 3.0) -> dict:
-    """Empirically test the LOF outlier filter that Klimis et al. propose (§8.1)
+    """Empirically test the LOF outlier filter that Klimis et al. propose ([1, §8.1])
     as a mitigation for ambiguous timings, applied to the naive sample-based
     baseline it was intended for.
 

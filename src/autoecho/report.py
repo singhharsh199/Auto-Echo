@@ -177,7 +177,7 @@ def generate_wss_report(levels, analysis, validation, output_path=None,
         r += ("Note: this ranks the level *counters*. The framework's productive "
               "pipeline uses the most accurate and stable counter — K-Means + "
               "Silhouette — to choose the number of levels, and change-point to "
-              "*localise* each cache's capacity (see Section 4).\n\n")
+              "*localise* each cache's capacity (see Section 4 below).\n\n")
         r += ("| Rank | Method | Mean levels | Std | Agreement | Modal | Expected "
               "| Count error | Count OK |\n")
         r += "|---|---|---|---|---|---|---|---|---|\n"
