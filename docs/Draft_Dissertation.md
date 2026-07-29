@@ -150,7 +150,7 @@ subsequent load, whose latency acts as a signature for where the data currently
 resides. The headline contribution of that work is not the latency profiling
 itself but its use as an **Oracle inside an active model-learning loop** that
 infers the persistency semantics of non-volatile memory, including the Intel
-Write Pending Queue (WPQ). On an Intel Xeon E-2286G the authors report
+Write Pending Queue (WPQ). On an Intel Xeon E-2286G the paper reports
 characteristic latency bands for L1, L2, L3, WPQ and DRAM.
 
 Two inherited assumptions must be retired carefully, because the first Auto-Echo
@@ -365,7 +365,7 @@ kept on one core via a QoS hint (Apple), `sched_setaffinity` (Linux), or
 ### 4.1.1 Runtime Timer Calibration (An Improvement Over the Reference)
 Converting ticks to nanoseconds robustly is a portability problem in itself. The
 reference implementation converts cycles to nanoseconds by **parsing the "cpu
-MHz" field from `/proc/cpuinfo`**, which the authors themselves acknowledge is
+MHz" field from `/proc/cpuinfo`**, which the paper itself acknowledges is
 specific to Linux [1]. This has two weaknesses: it is not portable beyond Linux,
 and the `rdtscp` counter actually advances at the *invariant-TSC* (nominal)
 frequency, whereas "cpu MHz" reports the current, turbo-scaled core clock — so
@@ -573,7 +573,7 @@ consistent with the merged mid-band actually observed (§6.2). On the Intel part
 the OS documents L1, L2 and L3, giving four. The rule depends only on what the
 platform reports, never on what the method found.
 
-### 4.4 Hyperparameters and What "Automatic" Claims
+### 4.4 Hyperparameters and the Scope of the Automatic Claim
 Auto-Echo removes the *per-machine* tuning knob — the change-point penalty that
 previously required an operator to set per platform — but it is not free of
 constants, and it would be misleading to claim otherwise. Every fixed value in the
@@ -632,9 +632,9 @@ Elbow-vs-Silhouette model-selection plot (Fig. 6).
 
 ## 5. Baseline and Its Failure (Critical Analysis)
 The initial prototype is a **portability-oriented approximation of the reference
-paper's measurement technique** (Klimis §6.1, the method behind their Figure 7):
-each timed load is preceded by a write to the target address and — on x86 — an
-explicit `clflush`, with the load timed by `rdtscp` [1]. It is an *approximation*,
+paper's measurement technique** [1, §6.1] — the method behind that paper's
+Figure 7: each timed load is preceded by a write to the target address and, on
+x86, an explicit `clflush`, with the load timed by `rdtscp`. It is an *approximation*,
 not a faithful reproduction: it uses a different buffer size and sample count,
 and on ARM the `clflush` has no equivalent, so the flush step is simply omitted.
 The contribution here is the finding that this **store/flush/timed-load approach
@@ -707,8 +707,8 @@ design — one that never writes before reading, never times a single access, an
 never needs a flush. The WSS pointer chase of §4.1 satisfies all three by
 construction.
 
-**Evaluating the paper's proposed mitigation.** Klimis (§8.1) propose a
-Local Outlier Factor (LOF) filter [3] to clean ambiguous timings. We evaluated it
+**Evaluating the paper's proposed mitigation.** Klimis proposes a Local Outlier
+Factor (LOF) filter [3] to clean ambiguous timings [1, §8.1]. We evaluated it
 directly on the baseline data (`evaluation.evaluate_lof_mitigation`). LOF flagged
 only ~0.04% of samples as outliers — the quantised data is too degenerate for a
 density-based method — and **100% of the surviving samples still lay exactly on
@@ -951,7 +951,7 @@ even though the L3 is now resolved and the Silhouette count is stable:
 
 The K-Means inertia elbows at **k = 2** — the fast-vs-slow (L1/L2 vs. memory) split
 every run agrees on — whereas the Silhouette score peaks sharply at **k = 4**
-(score 0.935, up from 0.860 on 4 KiB pages: the recovered L3 plateau makes the
+(score 0.935, up from 0.885 on 4 KiB pages: the recovered L3 plateau makes the
 four-way partition cleaner). This persistent disagreement, visualised in Fig. 8, is
 the model-selection form of the *not-unanimous* x86 estimator ensemble quantified in
 Table 8, and the direct contrast with the M1's fully unanimous agreement
@@ -1073,7 +1073,11 @@ it is not varied anywhere else in the evaluation. Table 10 varies it directly.
 **Table 10: Sampling-density robustness — the selected level count against sweep
 resolution (`sampling_density_sweep.py`).** The Apple M1 rows are *fresh
 measurements*: the probe was re-run end to end at each density, so each row is an
-independent sweep rather than a re-analysis. The Intel rows are exact subsets of
+independent sweep rather than a re-analysis. This is why the M1 row at ten
+points per octave reports a Silhouette of 0.898 where §4.2.1 reports 0.894 for
+the same machine and density: the two figures come from different sweeps, and
+the gap between them is ordinary run-to-run variation. The Intel rows, by
+contrast, are exact subsets of
 the huge-page curve of §6.3 — because the sweep is geometric, taking every *m*-th
 point is precisely the grid a sweep at 10/*m* points per octave would have
 visited, so no value is interpolated or invented; densities *above* the source
@@ -1325,7 +1329,7 @@ memory" user right (no kernel module or driver). Remaining directions:
   change-point penalty that earlier required an operator to set a value *per
   machine* has been eliminated: the level count is set by Silhouette model
   selection and the boundaries by penalty-free `Dynp` localisation. The pipeline
-  is not thereby free of constants, and §4.4 discloses all seventeen of them. The
+  is not thereby free of constants, and §4.4 discloses all sixteen of them. The
   defensible claim is narrower than "no tuning knob remains": **no constant is
   tuned per machine** — every value is identical across both reported platforms,
   and no result was obtained by adjusting one. The remaining honest qualification

@@ -323,7 +323,7 @@ def cluster_level_count(
             labels = GaussianMixture(n_components=k, random_state=42).fit_predict(X)
         if len(set(labels)) < 2:
             continue
-        score = silhouette_score(X, labels, random_state=42)
+        score = silhouette_score(X, labels)
         if score > best_score:
             best_k, best_score = k, score
     return best_k, best_score
@@ -427,7 +427,7 @@ def silhouette_curve(curve: pd.DataFrame, max_k: int = DEFAULT_MAX_K) -> list:
         labels = exact[k]
         if len(set(labels)) < 2:
             continue
-        out.append((k, float(silhouette_score(X, labels, random_state=42))))
+        out.append((k, float(silhouette_score(X, labels))))
     return out
 
 
