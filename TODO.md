@@ -3,8 +3,10 @@
 Living checklist of what's left to do. Updated 2026-07-29.
 
 **Machine status: M1 = validated (2/2). Intel i5-13450HX = validated (3/3, 2 MiB
-huge pages).** Both are fully written up. The dissertation is 35 pages / ~15,760
-words, builds clean, and contains no placeholders. Suite: 34 passed, 1 skipped.
+huge pages).** The two items that were blocking the 80+ band are now done: the
+**lmbench external cross-check** (§6.3.1, Table 11, Fig. 11) and the **shared-L3
+contention test** (§6.3.2, Table 12, Fig. 12). Suite: **35 passed, 0 skipped** on
+Windows (one test skips only on macOS).
 
 ## Done
 - [x] WSS pointer-chase probe + runtime timer calibration (working method)
@@ -35,17 +37,19 @@ words, builds clean, and contains no placeholders. Suite: 34 passed, 1 skipped.
 - [x] Interactive dashboard (`frontend/`) driven off the pipeline's own outputs
 - [x] Five diagrams + machine-labelled result figures; PDF rebuilt with ToC
 
-## Blocking the 80+ band (one experiment)
-- [ ] **lmbench external cross-check.** The evaluation's only oracle is OS-reported
-      capacity, which says nothing about whether the *latency curve* is right.
-      Converter is written and tested (5 tests). On the Intel box under WSL2:
-      ```
-      lat_mem_rd -N 5 -t 512 128 > lmbench_raw.txt
-      python crosscheck_lmbench.py lmbench_raw.txt -o data/intel_i5_13450hx/lmbench_curve.csv
-      python compare_curves.py data/intel_i5_13450hx/wss_curve.csv \
-          data/intel_i5_13450hx/lmbench_curve.csv \
-          --labels "Auto-Echo,lmbench lat_mem_rd" --annotate -o data/crosscheck_intel.png
-      ```
+## Blocking the 80+ band — DONE
+- [x] **lmbench external cross-check (§6.3.1, Table 11, Fig. 11).** lmbench
+      `lat_mem_rd` built under WSL2 (needed `libtirpc` for the removed `rpc/rpc.h`
+      and a direct compile against its lib sources to link on gcc 15) and swept with
+      `-N 5 -t 512 128`. Overlaid on the Auto-Echo 2 MiB huge-page curve: the two
+      independent tools recover the **same four-tier staircase** with an almost
+      identical L1→L2 step (3.0× vs 3.1×); the inner hierarchy agrees within
+      ~20–25 %, the deep region carries an identified page-size/WSL2 confound. The
+      default (non-`-t`) stride mode is retained as a **negative control** — its
+      prefetchable walk collapses deep latency to ~5–12 ns, confirming `-t`
+      (thrash, prefetcher-defeating like Auto-Echo's randomised chase) is the correct
+      comparator. Artefacts: `data/intel_i5_13450hx/lmbench_raw.txt`,
+      `lmbench_curve.csv`, `lmbench_stride_curve.csv`, `data/crosscheck_intel.png`.
 
 ## Open on the M1
 - [ ] **Page size is never stated, and it is not 4 KiB.** macOS on Apple Silicon
@@ -65,10 +69,33 @@ words, builds clean, and contains no placeholders. Suite: 34 passed, 1 skipped.
       allocation, not a larger page.
 
 ## Open on the Intel
-- [ ] **The −30.4% L3 under-read is asserted, not tested.** §6.3 attributes it to
-      shared-L3 contention. One quiesced-vs-loaded sweep pair would test it; if the
-      knee moves, that is evidence, and if it does not, the explanation is wrong.
+- [x] **The −30.4% L3 under-read is now MEASURED as contention (§6.3.2, Table 12,
+      Fig. 12).** Quiesced-vs-loaded huge-page comparison: an 8-worker shared-L3
+      streaming load (`l3_load.py`, 8 × 32 MiB pinned off CPU 0) collapses the
+      detected L3 knee from 13.9 MiB to a stable **3.5 MiB**, while the least-contended
+      sweep recovers ~19.7 MiB (≈ nominal 20) — a monotonic contention gradient. The
+      knee is frequency-invariant, so the capacity result survives the all-core-turbo
+      DVFS drop under load. Methodological note: the 512 MiB probe allocation loses
+      2 MiB pages under load (Windows error 1450, large-page-pool depletion), so the
+      loaded sweep used `--max-mb 128` (the knee sits below 20 MiB, on the identical
+      grid, so it is unaffected). Reported as a *two-condition* comparison on one
+      machine, not a proven dose-response law. Artefacts: `data/intel_l3_quiesced/`,
+      `data/intel_l3_loaded/`, `data/l3_contention_intel.png`, `l3_contention_report.py`.
 - [ ] Performance-counter corroboration of the TLB story.
+- [x] *(C — DONE)* **Capacity confidence intervals over 10 huge-page sweeps**
+      (`capacity_ci.py`; Table 6 footnote, §7). After cooling the CPU back to full
+      turbo (L1 1.57 ns), a `--runs 10 --max-mb 512 --huge-pages` run gives per-level
+      capacity median [min–max]: **L1 55.7 KiB [55.7–55.7], L2 1.2 MiB [1.2–1.2],
+      L3 19.7 MiB [13.9–19.7]** — private L1/L2 zero spread, only the shared L3 varies,
+      corroborating §6.3.2. That run also hit 3/3 recall+precision at 7.3 % mean
+      error. Artefacts: `data/intel_ci/`, `capacity_ci.py`.
+- [x] *(D — DONE)* **Measured Intel density rows for Table 10 at 5/10/20 pts/octave**
+      (`sampling_density_sweep.py measure --densities 5 10 20 --max-mb 512
+      --huge-pages`). Selected count **k = 4 at every density** (104/202/388 points;
+      silhouette ~0.93; elbow 2, DBSCAN 4, cp-knee 2) — confirms the previously
+      subsampled rows. Table 10 now shows measured Intel rows, including the 20
+      pts/octave density that lies *above* the old subsampled grid. Artefacts:
+      `data/density_intel/`.
 
 ## Author items (not code)
 - [ ] Sign and date the Declaration of Originality.
