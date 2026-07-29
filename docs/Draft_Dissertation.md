@@ -1060,18 +1060,30 @@ at 4 KiB, the M1's larger base page is a plausible part of why no comparable
 saturation appears on the M1 curve at all — its DRAM plateau is reached at the
 capacity one would expect, not prematurely.
 
-Two things follow, and both are limitations rather than results. First, the
-M1-versus-Intel comparison is confounded: the M1's three-level result is a 16 KiB
-result and the Intel's four-level result a 2 MiB result, so neither the agreement
-nor the disagreement between them is attributable to the ISA alone. Second, the
-M1's merged L2/SLC band (§6.2) sits in exactly the working-set range where
-translation cost begins to matter, and it has never been probed with pages larger
-than the OS default. Whether a larger page would split that band, as 2 MiB pages
-split the Intel's deep region, is an open question this dissertation does not
-answer; §7 scopes the experiment. What can be said is that the quantitative
-attribution — how much of the M1's cleaner deep curve is the larger page and how
-much is the architecture — would need the translation-lookaside-buffer geometry of
-both parts, which is documented for neither at the level of detail required.
+Two things follow. The first is a limitation: the M1-versus-Intel comparison is
+confounded, because the M1's three-level result is a 16 KiB result and the Intel's
+four-level result a 2 MiB result, so neither the agreement nor the disagreement
+between them is attributable to the ISA alone. The M1's merged L2/SLC band (§6.2)
+sits in exactly the working-set range where translation cost begins to matter, and
+whether a larger page would split that band — as 2 MiB pages split the Intel's deep
+region — is a question this dissertation cannot answer.
+
+The second is a finding, and it explains why. **The page-size control that resolved
+the Intel L3 cannot be applied to Apple Silicon from user space at all.** macOS's
+superpage facility is the obvious route and it does not function here: `mmap` with
+`VM_FLAGS_SUPERPAGE_SIZE_2MB`, and with the permissive `VM_FLAGS_SUPERPAGE_SIZE_ANY`,
+both fail with `EINVAL` on this machine — superpages are an Intel-era macOS facility
+that arm64 does not honour, and no equivalent unprivileged large-page API replaces
+them. So the asymmetry is not an implementation gap that more effort would close; it
+is a difference in what the two platforms permit an unprivileged tool to do, of
+exactly the kind that motivated this project's design in the first place. The ARM64
+path lacks a user-space cache flush (§3.3) *and* lacks a user-space page-size
+control, and in both cases the method had to be built around the absence of a
+primitive rather than its presence. What remains beyond reach on this platform is
+the quantitative attribution — how much of the M1's cleaner deep curve is the larger
+page and how much the architecture — which would need the
+translation-lookaside-buffer geometry of both parts, documented for neither at the
+level of detail required.
 
 The synthetic curves (Fig. 9) should
 therefore be read as *method verification* — showing the counting machinery adapts to a
@@ -1341,17 +1353,25 @@ memory" user right (no kernel module or driver). Remaining directions:
   not shared under contention (to test whether the −30 % L3 under-read narrows) and to
   add performance-counter corroboration. (The runtime-calibration path on the invariant
   TSC is confirmed on real x86 — 0.383 ns/tick on the i5-13450HX.)
-- **A page-size control on Apple Silicon.** The large-page path is currently gated to
-  Windows, so the M1 has only ever been measured on the OS default 16 KiB page — a
-  confound in the cross-machine comparison (§6.4, §6.5). macOS exposes 2 MiB
-  superpages through `mmap` with `VM_FLAGS_SUPERPAGE_SIZE_2MB`, which would make the
-  page size a controlled variable on *both* machines rather than one. The specific
-  question it would settle is whether the merged L2/SLC mid-band of §6.2 is a genuine
-  capacity feature or is partly translation cost: 2 MiB pages split the Intel's deep
-  region, and the M1's merged band lies in the working-set range where the same
-  mechanism would operate. A negative result — the band surviving intact under
-  superpages — would materially strengthen the SLC attribution, which §6.5 currently
-  has to leave open.
+- **A page-size control on Apple Silicon — blocked by the platform, not by effort.**
+  The huge-page path is gated to Windows, so the M1 has only ever been measured on
+  the OS default 16 KiB page, a confound in the cross-machine comparison (§6.4,
+  §6.5). The obvious remedy is macOS's superpage facility, and it does not work
+  here: `mmap` with `VM_FLAGS_SUPERPAGE_SIZE_2MB` — and with the permissive
+  `VM_FLAGS_SUPERPAGE_SIZE_ANY` — both fail with `EINVAL` on this machine. macOS
+  superpages are an Intel-era facility that Apple Silicon does not honour, and no
+  equivalent user-space large-page API is exposed on arm64 macOS. The consequence is
+  worth stating as a result rather than a to-do: **the page-size control that
+  resolved the Intel L3 cannot be applied to Apple Silicon from user space at all.**
+  This is a genuine asymmetry in what the platforms permit an unprivileged tool to
+  do, and it sits squarely within this dissertation's theme — the ARM64 path lacks a
+  cache flush (§3.3) *and* lacks a page-size control, and in both cases the method
+  had to be designed around the absence rather than the presence of a primitive.
+  What it leaves open is the question a page-size control would have settled:
+  whether the merged L2/SLC mid-band of §6.2 is a genuine capacity feature or partly
+  translation cost. Answering it on Apple Silicon now requires a different
+  instrument — performance counters, or a kernel-side allocation — rather than a
+  larger page.
 - **Broadening the hardware base.** Both machines evaluated here are consumer
   laptop performance cores, so the generalisation claim rests on a narrow sample.
   Three extensions would each probe a different axis: a newer Apple-silicon part

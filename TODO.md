@@ -56,10 +56,13 @@ words, builds clean, and contains no placeholders. Suite: 34 passed, 1 skipped.
       that the M1's TLB reach comfortably exceeds its cache hierarchy while the
       Intel's 4 KiB reach does not — would *strengthen* the TLB argument, but the
       TLB entry counts need a citable source before the claim is made.
-- [ ] **Huge pages never tested on the M1.** The `--huge-pages` path is
-      Windows-only (`VirtualAlloc(MEM_LARGE_PAGES)`). macOS exposes
-      `VM_FLAGS_SUPERPAGE_SIZE_2MB`. Open question: would larger pages split the
-      merged L2+SLC band that §6.2 reports as a single mid-band?
+- [x] ~~Huge pages on the M1~~ — **tested and impossible from user space.** macOS
+      superpages (`VM_FLAGS_SUPERPAGE_SIZE_2MB` *and* `VM_FLAGS_SUPERPAGE_SIZE_ANY`)
+      both fail with `EINVAL` on Apple Silicon; they are an Intel-era facility arm64
+      does not honour. Written up in §6.4 and §7 as a finding about platform
+      asymmetry rather than an outstanding experiment. Answering the L2/SLC merge
+      question on Apple Silicon now needs performance counters or a kernel-side
+      allocation, not a larger page.
 
 ## Open on the Intel
 - [ ] **The −30.4% L3 under-read is asserted, not tested.** §6.3 attributes it to
