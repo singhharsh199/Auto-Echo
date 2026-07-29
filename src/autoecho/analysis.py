@@ -24,7 +24,7 @@ import warnings
 import numpy as np
 import pandas as pd
 from scipy.signal import medfilt
-from sklearn.cluster import DBSCAN, KMeans
+from sklearn.cluster import DBSCAN
 from sklearn.metrics import silhouette_score
 from sklearn.mixture import GaussianMixture
 
@@ -44,6 +44,72 @@ LEVEL_NAMES = ["L1 Cache", "L2 Cache", "L3 Cache", "L4 Cache", "L5 Cache"]
 # productive hybrid) so the count that drives discovery and the counts reported
 # for cross-check search the same k range.
 DEFAULT_MAX_K = 8
+
+
+def _exact_1d_kmeans(x, kmax: int):
+    """Globally optimal 1-D k-means for every k in 1..kmax, by dynamic programming.
+
+    K-Means is normally solved by Lloyd's algorithm, a local-search heuristic with
+    no optimality guarantee. In one dimension an optimal partition is necessarily
+    *contiguous in sorted order* -- if x_a < x_b < x_c with x_a, x_c in one cluster
+    and x_b in another, moving x_b into that cluster strictly lowers the objective
+    -- so the search collapses to choosing k-1 split points among the sorted
+    values, which DP solves exactly in O(k n^2). This is Fisher's (1958) grouping
+    for maximum homogeneity, known to cartography as Jenks natural breaks and to R
+    as Ckmeans.1d.dp (Wang & Song, 2011).
+
+    Using it makes the level-counting step provably optimal and fully
+    deterministic: no seeding, no restarts, no random state. A single DP fill
+    yields every k, so the whole model-selection scan costs one pass.
+
+    :returns: ``(costs, labels)`` where ``costs[k]`` is the minimal within-cluster
+        sum of squares for k clusters and ``labels[k]`` the assignment in the
+        caller's original point order (both indexed 1..kmax).
+    """
+    x = np.asarray(x, dtype=float).ravel()
+    order = np.argsort(x, kind="stable")
+    xs = x[order]
+    n = xs.size
+    kmax = max(1, min(kmax, n))
+
+    # Prefix sums give any segment's sum of squared deviations in O(1).
+    cs = np.concatenate([[0.0], np.cumsum(xs)])
+    cs2 = np.concatenate([[0.0], np.cumsum(xs * xs)])
+
+    cost = np.full((kmax + 1, n + 1), np.inf)
+    split = np.zeros((kmax + 1, n + 1), dtype=np.int64)
+    cost[0, 0] = 0.0
+
+    for c in range(1, kmax + 1):
+        for j in range(c, n + 1):
+            i = np.arange(c - 1, j)
+            m = (j - i).astype(float)
+            s = cs[j] - cs[i]
+            seg = cs2[j] - cs2[i] - (s * s) / m  # SSE of xs[i:j]
+            vals = cost[c - 1, i] + np.maximum(seg, 0.0)
+            best = int(np.argmin(vals))
+            cost[c, j] = vals[best]
+            split[c, j] = i[best]
+
+    costs, labels = {}, {}
+    for k in range(1, kmax + 1):
+        lab_sorted = np.empty(n, dtype=np.int64)
+        j = n
+        for c in range(k, 0, -1):
+            i = int(split[c, j])
+            lab_sorted[i:j] = c - 1
+            j = i
+        lab = np.empty(n, dtype=np.int64)
+        lab[order] = lab_sorted
+        costs[k] = float(cost[k, n])
+        labels[k] = lab
+    return costs, labels
+
+
+def _log_latency(curve: pd.DataFrame) -> np.ndarray:
+    """Clustering feature: log-latency, so that widely separated levels
+    (L1 ~1.5 ns vs DRAM ~130 ns) do not swamp the finer L1/L2 gap."""
+    return np.log(np.maximum(curve["latency_ns"].values, 1e-6)).reshape(-1, 1)
 
 
 def _human_bytes(n: float) -> str:
@@ -237,19 +303,24 @@ def cluster_level_count(
     """Independent estimate of the number of levels by clustering the per-size
     latency values. Returns ``(best_k, best_silhouette)``.
 
-    Clustering is performed on log-latency so that widely separated levels
-    (L1 ~1.5 ns vs DRAM ~130 ns) do not swamp the finer L1/L2 gap."""
-    X = np.log(np.maximum(curve["latency_ns"].values, 1e-6)).reshape(-1, 1)
+    For ``kmeans`` the partition is the *global* optimum from
+    :func:`_exact_1d_kmeans`, so the count is deterministic and cannot be an
+    artefact of a local optimum. ``gmm`` retains the EM fit, which has no exact
+    counterpart."""
+    X = _log_latency(curve)
     n = len(X)
+    kmax = min(max_k, n - 1)
     best_k, best_score = 1, -1.0
 
-    for k in range(2, min(max_k, n - 1) + 1):
+    exact = _exact_1d_kmeans(X, kmax)[1] if algorithm == "kmeans" else None
+    if algorithm not in ("kmeans", "gmm"):
+        raise ValueError(f"unknown algorithm {algorithm!r}")
+
+    for k in range(2, kmax + 1):
         if algorithm == "kmeans":
-            labels = KMeans(n_clusters=k, random_state=42, n_init=10).fit_predict(X)
-        elif algorithm == "gmm":
-            labels = GaussianMixture(n_components=k, random_state=42).fit_predict(X)
+            labels = exact[k]
         else:
-            raise ValueError(f"unknown algorithm {algorithm!r}")
+            labels = GaussianMixture(n_components=k, random_state=42).fit_predict(X)
         if len(set(labels)) < 2:
             continue
         score = silhouette_score(X, labels, random_state=42)
@@ -268,14 +339,13 @@ def elbow_method(curve: pd.DataFrame, max_k: int = DEFAULT_MAX_K) -> tuple:
 
     :returns: ``(elbow_k, [(k, inertia), ...])``.
     """
-    X = np.log(np.maximum(curve["latency_ns"].values, 1e-6)).reshape(-1, 1)
+    X = _log_latency(curve)
     n = len(X)
     ks = list(range(1, min(max_k, n - 1) + 1))
-    inertias = []
-    for k in ks:
-        inertias.append(
-            float(KMeans(n_clusters=k, random_state=42, n_init=10).fit(X).inertia_)
-        )
+    # Exact within-cluster sums of squares, so the elbow is read off the true
+    # cost curve rather than off whatever local optimum Lloyd happened to reach.
+    costs = _exact_1d_kmeans(X, ks[-1])[0]
+    inertias = [costs[k] for k in ks]
     if len(ks) < 3:
         return (ks[-1] if ks else 1), list(zip(ks, inertias))
 
@@ -303,7 +373,7 @@ def cluster_level_count_dbscan(curve: pd.DataFrame, eps: float = 0.3) -> int:
     """Density-based level-count estimate (DBSCAN). Unlike K-Means/GMM it does
     not need the number of clusters in advance and treats sparse transition
     points as noise. ``eps`` is in log-latency units."""
-    X = np.log(np.maximum(curve["latency_ns"].values, 1e-6)).reshape(-1, 1)
+    X = _log_latency(curve)
     labels = DBSCAN(eps=eps, min_samples=3).fit_predict(X)
     return len(set(labels) - {-1})  # exclude noise label
 
@@ -348,11 +418,13 @@ def silhouette_curve(curve: pd.DataFrame, max_k: int = DEFAULT_MAX_K) -> list:
     """Silhouette score at each candidate k, over log-latency. Returned so the
     model-selection figure can plot the actual Silhouette curve (and the k it
     peaks at) rather than only marking the chosen k with a line."""
-    X = np.log(np.maximum(curve["latency_ns"].values, 1e-6)).reshape(-1, 1)
+    X = _log_latency(curve)
     n = len(X)
+    kmax = min(max_k, n - 1)
+    exact = _exact_1d_kmeans(X, kmax)[1]
     out = []
-    for k in range(2, min(max_k, n - 1) + 1):
-        labels = KMeans(n_clusters=k, random_state=42, n_init=10).fit_predict(X)
+    for k in range(2, kmax + 1):
+        labels = exact[k]
         if len(set(labels)) < 2:
             continue
         out.append((k, float(silhouette_score(X, labels, random_state=42))))
