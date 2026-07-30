@@ -101,20 +101,17 @@ docstrings were updated to match.
       `lmbench_curve.csv`, `lmbench_stride_curve.csv`, `data/crosscheck_intel.png`.
 
 ## Open on the M1
-- [x] ~~**Page size is never stated, and it is not 4 KiB.**~~ Done: stated in §5.1
-      (Page column), §5.4 and §5.5.  Original note retained below for context.
-- [ ] ~~superseded~~ **Page size is never stated, and it is not 4 KiB.** macOS on Apple Silicon
-      uses **16 KiB** base pages (`sysctl hw.pagesize` = 16384). The dissertation
-      makes page size the decisive variable for the Intel L3 but never gives the
-      M1's, so the cross-machine comparison is confounded by an unstated factor.
-      Worth one sentence in §6.4 and a row in §6.1. The likely quantitative story —
-      that the M1's TLB reach comfortably exceeds its cache hierarchy while the
-      Intel's 4 KiB reach does not — would *strengthen* the TLB argument, but the
-      TLB entry counts need a citable source before the claim is made.
+- [x] **Page size stated.** macOS on Apple Silicon uses **16 KiB** base pages
+      (`sysctl hw.pagesize` = 16384), which the draft previously never gave while
+      making page size the decisive variable for the Intel L3. Now recorded as the
+      Page column of Table 4 (§5.1) and discussed as a cross-machine confound in
+      §5.4 and §5.5. The quantitative attribution — how much of the M1's cleaner
+      deep curve is the larger page rather than the architecture — remains open,
+      because it needs TLB entry counts that are documented for neither part.
 - [x] ~~Huge pages on the M1~~ — **tested and impossible from user space.** macOS
       superpages (`VM_FLAGS_SUPERPAGE_SIZE_2MB` *and* `VM_FLAGS_SUPERPAGE_SIZE_ANY`)
       both fail with `EINVAL` on Apple Silicon; they are an Intel-era facility arm64
-      does not honour. Written up in §6.4 and §7 as a finding about platform
+      does not honour. Written up in §5.4 and §6 as a finding about platform
       asymmetry rather than an outstanding experiment. Answering the L2/SLC merge
       question on Apple Silicon now needs performance counters or a kernel-side
       allocation, not a larger page.

@@ -31,14 +31,17 @@ after a new sweep.
 
 Append one entry to `MACHINES` in `scripts/build-data.mjs` and re-run `npm run prep`.
 Nothing else needs to change — the machine switcher, cards, chart and tables are
-all driven off that list. For the Apple M5 the entry is already there, commented out:
+all driven off that list:
 
 ```js
-{ id: "m5", dir: "m5", name: "Apple M5", arch: "ARM64",
-  core: "TBD", lineSize: "TBD", color: "#CC79A7", status: "pending" },
+{ id: "zen4", dir: "amd_zen4", name: "AMD Ryzen 7 7700X", arch: "x86-64",
+  core: "Zen 4", lineSize: "64 B", color: "#CC79A7", status: "validated" },
 ```
 
-so once `data/m5/` exists, uncomment it.
+Every field must come from that machine's own `validation_report.md` — `core` and
+`lineSize` are reported in §5.1 of the dissertation and must not be guessed. The
+on-screen series colour is assigned by `src/lib/series.ts`, so `color` here is only
+a fallback for a machine that has no token yet.
 
 ## What the dashboard shows
 

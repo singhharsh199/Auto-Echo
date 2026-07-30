@@ -39,10 +39,11 @@ const MACHINES = [
     color: "#D55E00",
     status: "validated",
   },
-  // {
-  //   id: "m5", dir: "m5", name: "Apple M5", arch: "ARM64",
-  //   core: "TBD", lineSize: "TBD", color: "#CC79A7", status: "pending",
-  // },
+  // To add a third machine: copy an entry above, point `dir` at its output
+  // directory under data/, and fill every field from that machine's own
+  // validation_report.md -- `core` and `lineSize` are reported in §5.1 of the
+  // dissertation and must not be guessed. `lib/series.ts` assigns the on-screen
+  // series colour, so `color` here is only a fallback.
 ];
 
 // ---------------------------------------------------------------- CSV parsing

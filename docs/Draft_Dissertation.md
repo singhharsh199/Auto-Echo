@@ -82,10 +82,23 @@ it selects the correct level count and recovers both TLB-unmasked capacities.
 
 ## 1. Introduction
 Modern processors rely on a deep hierarchy of caches (L1, L2, L3) to mitigate the
-latency gap between the CPU and DRAM. The capacities and latencies of these
-layers are largely opaque to user-space software: developers rely on vendor
-documentation or privileged interfaces (performance counters, kernel modules) to
-map them.
+latency gap between the CPU and DRAM — the "memory wall" Wulf and McKee [30]
+identified as the structural consequence of processor and memory speeds improving at
+different exponential rates, and which remains the dominant constraint on
+data-intensive code [31]. Drepper's practitioner survey [32] makes the corollary
+explicit: performance on modern hardware is largely determined by how a program's
+working set maps onto the cache hierarchy, so knowing that hierarchy's shape is a
+precondition for reasoning about it.
+
+The capacities and latencies of these layers are nevertheless largely opaque to
+user-space software, so developers reach for a table someone else has already filled
+in: `hwloc`/`lstopo` [27], which reports what the OS and firmware expose; the x86
+`CPUID` deterministic cache-parameter leaf (04H) [28], which is architecture-specific
+by construction; a vendor tool such as Intel's Memory Latency Checker [29]; or
+privileged interfaces — performance counters via PAPI [33] or LIKWID [34], and kernel
+modules. Each is more accurate than measurement on the hardware it covers, and each
+fails in the same way: it presupposes that the hierarchy has already been described
+somewhere (§2.2).
 
 **Motivation.** An architecture-agnostic tool that maps a memory hierarchy from
 empirical measurement alone — no privileges, no per-architecture instructions —
@@ -154,11 +167,13 @@ labels or thresholds, and (iii) validates its output against known hardware.
 This project sits at the intersection of two research traditions: empirical
 characterisation of the memory hierarchy from user space through timing
 measurement, and unsupervised model selection for automatic structure discovery.
-The immediate inspiration is the reference paper [1], but the *measurement*
-technique Auto-Echo ultimately adopts belongs to a much older and well-established
-body of benchmarking work. This section situates the project within both
-lineages and states precisely where its novelty lies — and, equally, where it does
-not.
+A third — microarchitectural side-channel analysis — recovers cache geometry from
+user-space timing far more precisely than either, and §2.3 states plainly why its
+methods are not the ones this problem admits. The immediate inspiration is the
+reference paper [1], but the *measurement* technique Auto-Echo ultimately adopts
+belongs to a much older and well-established body of benchmarking work. This section
+situates the project within those lineages and states precisely where its novelty
+lies — and, equally, where it does not.
 
 ### 2.1 Memory echolocation
 Klimis [1] introduces *memory echolocation*: emitting a store and timing the
@@ -178,7 +193,7 @@ prototype adopted both and neither transfers:
   vocabulary was corrected accordingly.
 - The method relies on **`clflush` and fine-grained `rdtscp`**, both x86-only.
   Neither is available to user space on Apple Silicon, so the technique is not
-  portable as published. Section 5 shows empirically that porting it is not merely
+  portable as published. §4 shows empirically that porting it is not merely
   inconvenient but unsound, and for a reason deeper than instruction availability.
 
 Auto-Echo isolates the *hierarchy-mapping* aspect of echolocation, makes it
@@ -211,6 +226,76 @@ than a new idea. The relevant prior art:
   latency surface as both a pedagogical and a diagnostic artefact; Auto-Echo's
   output plot is a 1-D (fixed-stride) slice through that surface.
 
+### 2.3 A second, closer lineage: microarchitectural side channels
+
+There is an adjacent literature that also recovers cache geometry from unprivileged
+user-space timing, and it does so far more precisely than anything attempted here. It
+would be misleading to present timing-based cache inference as an open problem while
+ignoring that work, so this subsection states what it achieves and why its methods are
+not the ones this problem admits.
+
+**The measurement primitives.** Percival [35] first demonstrated that cache timing
+alone leaks a co-resident process's access pattern, on a hyperthreaded Pentium 4.
+Osvik, Shamir and Tromer [25] formalised two primitives that the field still uses:
+*Evict+Time* and **Prime+Probe**, in which the attacker fills a cache set and times
+its own re-access to learn which sets a victim touched. Yarom and Falkner's
+**Flush+Reload** [36] inverted the mechanism — flush a shared line with `clflush`,
+let the victim run, then time a reload — achieving single-line resolution on the
+last-level cache, and Gruss et al.'s **Flush+Flush** [37] refined it further by
+timing the *flush* itself rather than a reload, removing the attacker's own cache
+misses and with them the most obvious detection signal. Disselkoen et al. [38]
+replaced timing altogether with Intel TSX transactional aborts, obtaining a
+noise-free eviction signal. Liu et al. [39] showed Prime+Probe works on the
+last-level cache across cores, which is what made these techniques practical against
+a co-tenant rather than a co-thread.
+
+Two things in this lineage bear directly on the present work. First, **Flush+Reload
+depends on exactly the primitive Auto-Echo cannot use**: an unprivileged line-granular
+flush. Its unavailability on Apple Silicon (§2.4) is not an incidental gap but the
+same constraint that shapes the entire side-channel literature's portability, and it is
+why §4's baseline fails structurally rather than merely inconveniently. Second, the
+field's own reverse-engineering results establish how much *is* recoverable from
+user-space timing when one is willing to be architecture-specific: Maurice et al. [40]
+recovered Intel's undocumented last-level-cache slice hash function using performance
+counters, and Irazoqui et al. [41] did so by timing alone.
+
+**The eviction-set problem, and why it is the sharper instrument.** Every set-indexed
+attack needs a *minimal eviction set* — a group of addresses that collide in one cache
+set. Vila, Köpf and Morales [26] treat finding them as the central algorithmic
+problem, giving a reduction from quadratic to near-linear time and, in doing so,
+recovering associativity and set structure with an exactness a latency sweep cannot
+approach. Ge et al.'s survey [42] catalogues the resulting body of work. The
+consequence for this dissertation is worth stating plainly: **if the goal were
+associativity or line size, eviction-set construction would be the better tool**, and
+the stride sweep §6 proposes for those parameters is the weaker option.
+
+**Why this project takes the other trade.** The distinction is one of **goal and
+threat model, not of capability**. The side-channel line recovers fine-grained
+geometry — sets, ways, slice functions — for a specific *known* target, and is content
+to be architecture-specific, to require many thousands of carefully constructed
+accesses, to depend on primitives such as `clflush` or TSX that exist on some ISAs
+and not others, and to be re-derived per microarchitecture. Adversarial precision is
+the objective and portability is not. Auto-Echo's objective is the opposite trade:
+coarse parameters — how many levels exist, how large each is — recovered with *no*
+prior knowledge of the machine, no per-architecture instruction, and no operator
+tuning, on whatever hardware the tool is dropped onto. Neither dominates; they are
+complementary, and the honest summary is that this work occupies the portable,
+low-resolution corner of a space whose high-resolution corner is already well mapped.
+
+**What the framework is measured against in practice.** The alternatives a developer
+would actually reach for are worth naming rather than gesturing at. `hwloc` and its
+`lstopo` front end [27] report a machine's cache topology by reading what the OS and
+firmware already expose; on x86 the underlying source is the `CPUID` deterministic
+cache-parameter leaf (04H) [28], which returns level, type, line size, associativity
+and set count directly. Intel's Memory Latency Checker (MLC) [29] measures latency and
+bandwidth across the hierarchy, but is vendor-specific and takes the hierarchy's shape
+as given. Each is more accurate than Auto-Echo on the machines it supports, and that
+is precisely the point: each depends on a table someone has already filled in — a
+firmware description, an architecture-specific instruction, or a vendor's own tool.
+The question this dissertation asks is what remains recoverable when none of those is
+available, which is the situation of portable software reasoning about hardware it was
+not built for, and of any attempt to characterise an undocumented part.
+
 **Implication for novelty.** Measuring cache capacities by pointer chasing is
 classical; claiming it as novel would be indefensible. Auto-Echo's contribution is
 therefore explicitly the **layer above** the measurement: a fully unsupervised,
@@ -218,15 +303,30 @@ zero-configuration inference stage that determines *how many* levels exist and
 *where their boundaries lie* with no hard-coded thresholds and no prior knowledge
 of the machine, and that validates itself automatically against OS-reported ground
 truth on whatever machine it runs on. Where Yotov et al. automate extraction given
-a known hierarchy shape, Auto-Echo infers the shape itself.
+a known hierarchy shape, Auto-Echo infers the shape itself; where the side-channel
+literature recovers finer geometry, it does so with target-specific knowledge that
+this setting denies itself.
 
-### 2.3 Hardware barriers to user-space timing
-Three barriers recur in the literature and in this project's own empirical work:
+### 2.4 Hardware barriers to user-space timing
+Four barriers recur in the literature and in this project's own empirical work. The
+first three shape the probe's design; the fourth bounds what it can resolve, and is
+the subject of the controlled experiment in §5.3.
 
-- **Prefetching.** Regular access patterns are predicted and hidden by the
-  hardware prefetcher, flattening the very steps the method needs. Pointer
-  chasing over a randomised permutation makes each address data-dependent on the
-  previous load, serialising accesses and neutralising the prefetcher.
+- **Prefetching.** Regular access patterns are predicted and hidden by the hardware
+  prefetcher, flattening the very steps the method needs. Prefetching has been a
+  standard mitigation for cache-miss latency since Jouppi's stream buffers [43] and
+  Mowry et al.'s compiler-directed scheme [44], and modern implementations combine
+  several stride and stream engines per level [45]. Pointer chasing over a randomised
+  permutation makes each address data-dependent on the previous load, serialising
+  accesses and neutralising these engines — the standard defence, and the one lmbench
+  relies on. It is worth noting that this defence is not unconditional: Vicarte et al.
+  [46] showed that Apple's M1 contains a *data memory-dependent* prefetcher that
+  follows pointer-like values, and Chen et al. [47] built an attack on it. A
+  pointer-chase probe is exactly the access pattern such a prefetcher targets, which
+  is a threat to the method's core assumption on Apple Silicon specifically. The M1
+  curves reported in §5.2 show clean, well-separated plateaus, so the effect is not
+  large enough here to flatten the staircase — but this is an empirical observation
+  on one part, not a guarantee, and it is recorded as such in §5.5.
 - **Timer quantisation.** Apple Silicon's `mach_absolute_time` [2] advances on a
   24 MHz counter — roughly 41.7 ns per tick, via a `mach_timebase_info` rational
   of 125/3 — which is far coarser than an L1 hit of about 1.5 ns. Timing a single
@@ -234,18 +334,32 @@ Three barriers recur in the literature and in this project's own empirical work:
   more dependent hops inside one timing window recovers sub-nanosecond effective
   resolution.
 - **No user-space flush on ARM.** `clflush` is x86-only and macOS exposes no
-  data-cache flush to user space. The WSS methodology sidesteps this entirely: a
-  working set larger than a cache level overflows it *by construction*, so no
-  explicit eviction primitive is required. This is why the WSS formulation is not
-  merely a convenient alternative to the reference method but the only one of the
-  two that can be made portable at all.
+  data-cache flush to user space. Its absence rules out the whole Flush+Reload family
+  [36, 37] on this platform, and rules out the reference paper's primitive with it.
+  The WSS methodology sidesteps the problem entirely: a working set larger than a
+  cache level overflows it *by construction*, so no explicit eviction primitive is
+  required. This is why the WSS formulation is not merely a convenient alternative to
+  the reference method but the only one of the two that can be made portable at all.
+- **Address translation.** A fourth barrier emerges only at scale and proves decisive
+  in §5.3. As the working set grows, so does the number of distinct pages touched, and
+  once it exceeds the translation lookaside buffer's reach every dependent load may
+  additionally trigger a page-table walk. The cost is well characterised: Bhattacharjee
+  and Martonosi [48] documented TLB behaviour as a first-order bottleneck on parallel
+  workloads, and Barr et al. [49] analysed the walk itself and the caches that serve
+  it. The standard remedy is a larger page — Talluri and Hill [50] set out the
+  superpage case, Navarro et al. [51] gave the first practical transparent OS support,
+  and Ingens [52] and HawkEye [53] address the fragmentation and fairness problems
+  that follow; Basu et al. [54] argue for bypassing paging altogether for large
+  regions. Auto-Echo's 2 MiB huge-page control (§3.1) is the applied form of this
+  literature, and §5.3 shows it deciding whether a 20 MiB last-level cache is visible
+  at all.
 
-### 2.4 Unsupervised model selection
+### 2.5 Unsupervised model selection
 The number of memory levels is unknown a priori and varies by machine, so the
 inference stage must select model complexity **from the data**. This is the
 project's core machine-learning problem, and two distinct families of method
 address it. Their difference — whether the *order* of the observations is used —
-turns out to be the central design question, and Section 4.2.1 resolves it.
+turns out to be the central design question, and §3.2.1 resolves it.
 
 **Clustering with internal validity indices (order-ignoring).** Treating the
 per-size latencies as an unordered sample, K-Means [20] partitions them into `k`
@@ -256,18 +370,24 @@ distance to its nearest neighbouring cluster; the mean over all points is
 maximised at a `k` that balances compactness against separation. Crucially — and
 this is the property Auto-Echo depends on — the Silhouette is **not monotone in
 `k`**, so it exhibits an interior maximum and can select a count without any
-penalty term. Alternatives include the **Elbow method**, formalised by the
-knee-detection heuristic of Satopää et al. [19], the **gap statistic** [22], and,
-for likelihood-based models, the **Bayesian Information Criterion** [18].
+penalty term. Alternatives include the **Elbow method**, which descends from
+Thorndike [55] and is formalised here by the knee-detection heuristic of Satopää et
+al. [19]; the **gap statistic** [22]; the variance-ratio criterion of Caliński and
+Harabasz [56]; the within-to-between separation measure of Davies and Bouldin [57];
+and, for likelihood-based models, the **Bayesian Information Criterion** [18], used
+for cluster counting by Pelleg and Moore's X-means [58]. Milligan and Cooper's
+comparative study [59] remains the standard reference on how these indices differ in
+practice, and reports no uniform winner — which is why §5 ranks several against each
+other on this problem's own data rather than appealing to a general result.
 
 **A documented weakness in one dimension.** The Silhouette is known to degrade on
 one-dimensional data with unequal cluster sizes and unequally spaced gaps, where
 it tends to favour the partition at the single largest gap and thereby
 **under-count closely spaced levels**. This is not a hypothetical concern here: it
 is precisely the failure observed on the Intel part before the huge-page control
-was applied (Section 6.3), where the criterion collapsed a four-level hierarchy
+was applied (§5.3), where the criterion collapsed a four-level hierarchy
 onto the "fast versus slow" split at the largest latency discontinuity. A related
-and less widely discussed hazard, which Section 4.2.1 addresses directly, is that
+and less widely discussed hazard, which §3.2.1 addresses directly, is that
 the Silhouette weights every point equally and is therefore sensitive to how many
 observations each cluster contains — a quantity fixed by the experimenter's
 sampling grid rather than by the physics.
@@ -280,37 +400,52 @@ choice of `k − 1` split points and admits an exact dynamic-programming solutio
 This result is old — **Fisher** [16] gave it in 1958 as "grouping for maximum
 homogeneity", and cartographers know the same construction as **Jenks natural
 breaks** [17] — and a modern $O(k n^2)$ implementation is provided by **Wang & Song's
-Ckmeans.1d.dp** [15]. That an exact algorithm exists for exactly the case at hand
-is a fact any use of Lloyd's heuristic on 1-D data must answer to; Section 4.2.1
-does so empirically.
+Ckmeans.1d.dp** [15], whose formulation this project's dynamic program follows.
+Grønlund et al. [60] later reduced the bound to $O(n \log n)$ using the objective's
+concave-Monge structure; at the sizes here (94–388 points) the quadratic fill costs
+milliseconds, so the simpler recurrence is retained deliberately rather than by
+oversight. That an exact algorithm exists for exactly the case at hand is a fact any
+use of Lloyd's heuristic on 1-D data must answer to; §3.2.1 does so empirically.
 
 **Change-point detection (order-respecting).** Because a WSS curve is a
 piecewise-constant signal in `log S`, detecting the indices at which the level
-shifts is arguably a more natural formulation than clustering values. Truong et
-al. [6] survey the field; the two relevant estimators are **PELT** [14], which
-selects the number of breakpoints automatically via a penalty term, and **Dynp**,
-which finds the optimal segmentation *given* a fixed number of breakpoints by
-dynamic programming. The essential difficulty is that the segmentation cost
-decreases monotonically as breakpoints are added, so the number of segments cannot
-be read off the objective and must be fixed either by an external penalty — a
-per-machine tuning constant, precisely what this project set out to remove — or by
-a knee heuristic on the cost curve. Section 6 quantifies how badly a fixed penalty
-generalises across machines.
+shifts is arguably a more natural formulation than clustering values. Truong et al.
+[6] survey the field, and their `ruptures` library [61] supplies the implementations
+used here. Three estimators are relevant. **Binary segmentation** — the classical
+greedy approach, whose modern treatment and consistency analysis are due to
+Fryzlewicz [62] and which descends from Scott and Knott [63] — splits recursively
+at the single best breakpoint and is fast but not optimal. **Dynp** finds the
+globally optimal segmentation *given* a fixed number of breakpoints, by the
+segment-neighbourhood dynamic program of Auger and Lawrence [64]; the optimal
+partitioning recurrence of Jackson et al. [65] is the same idea with the count left
+free. **PELT** [14] selects the number of breakpoints automatically via a penalty
+term, pruning the candidate set to achieve linear expected cost.
+
+The essential difficulty is common to all three and is structural: the segmentation
+cost decreases monotonically as breakpoints are added, so the number of segments
+cannot be read off the objective and must be fixed either by an external penalty — a
+per-machine tuning constant, precisely what this project set out to remove — or by a
+knee heuristic on the cost curve. §5 quantifies how badly a fixed penalty generalises
+across machines. Auto-Echo's design consequence is to use Dynp for *localisation*
+only, with the count supplied from the value domain (§3.2), so that no penalty is
+ever chosen.
 
 **Density-based clustering.** DBSCAN [12] requires no cluster count, deriving
 groups from density connectivity and labelling sparse points as noise — attractive
 here because transition points genuinely *are* noise between plateaus. Its cost is
 that it substitutes one hyperparameter for another: the neighbourhood radius `eps`
-must still be chosen, a trade-off acknowledged explicitly in Section 4.4.
+must still be chosen, a trade-off acknowledged explicitly in §3.4.
 
 **The gap this project addresses.** The benchmarking literature recovers cache
 parameters but fixes the hierarchy's shape in advance, by hand-written rules or
-operator inspection. The clustering literature selects model complexity but is
-generally applied to unordered data. Neither tradition provides an automatic,
-architecture-agnostic, self-validating estimator of *how many* memory levels a
-machine has. Auto-Echo combines the portable, flush-free pointer-chase probe from
-the former with a model-selection stage from the latter, and reports the
-combination's behaviour — including where it fails — across two real ISAs.
+operator inspection. The side-channel literature recovers finer geometry than either,
+but for a known target and with per-microarchitecture knowledge this setting denies
+itself. The clustering literature selects model complexity but is generally applied
+to unordered data. None of the three provides an automatic, architecture-agnostic,
+self-validating estimator of *how many* memory levels a machine has. Auto-Echo
+combines the portable, flush-free pointer-chase probe from the first with a
+model-selection stage from the last, and reports the combination's behaviour —
+including where it fails — across two real ISAs.
 
 ---
 
@@ -348,7 +483,7 @@ points per octave — the probe performs five steps:
    address of the next. Because addresses are unpredictable, the hardware
    prefetcher cannot run ahead and accesses are fully serialised, so **no
    cache-flush instruction is needed** — essential on ARM/macOS, where none is
-   available to user space (§2.3).
+   available to user space (§2.4).
 4. A warm-up traversal brings the working set to steady state, after which
    $N \geq 2^{20}$ dependent hops are timed in a single window and the total divided by
    $N$. This **batch amortisation** yields sub-nanosecond effective resolution
@@ -402,13 +537,14 @@ and steps up once it overflows. The number of memory levels therefore equals the
 number of **plateaus** in the latency-versus-`log S` curve, and each cache's
 capacity is the working-set size at the plateau-to-rise transition (Fig. 4).
 Auto-Echo turns this staircase into a hierarchy in two stages, implemented with
-scikit-learn [7] for the clustering and `ruptures` [6] for the segmentation:
+scikit-learn [7] for the clustering and `ruptures` [61] for the segmentation:
 
 1. **Count the levels** by clustering the per-size log-latencies with K-Means and
    selecting the number of clusters by the Silhouette coefficient [4],
    cross-checked independently by the Elbow method, a Gaussian mixture and DBSCAN.
 2. **Localise each boundary** by change-point detection constrained to exactly
-   that many segments — dynamic-programming `Dynp` from `ruptures` [6] on the
+   that many segments — dynamic-programming `Dynp` from `ruptures` [61], the
+   segment-neighbourhood recurrence of Auger and Lawrence [64], on the
    log-latency signal, which needs no penalty once the segment count is fixed.
 
 This realises the principle *clustering counts the levels, change-point localises
@@ -488,7 +624,8 @@ in sorted order*: if $x_a < x_b < x_c$ with $x_a$ and $x_c$ in the same cluster
 but $x_b$ in another, exchanging $x_b$ into that cluster strictly decreases $W$.
 The search space therefore collapses from a Stirling number of partitions to the
 choice of $k - 1$ split points among $n - 1$ sorted gaps, which dynamic
-programming solves **exactly** in $O(k n^2)$. This is Fisher's 1958 result [16],
+programming solves **exactly** in $O(k n^2)$ — or $O(n \log n)$ with the sharper
+analysis of Grønlund et al. [60]. This is Fisher's 1958 result [16],
 the same construction as Jenks natural breaks [17], and is available as
 Ckmeans.1d.dp [15]. Using a heuristic where an exact algorithm exists demands
 justification.
@@ -581,7 +718,7 @@ comparable. Four independent estimators cross-check the productive one:
   Silhouette `k`, so its agreement with the productive count is genuine evidence
   rather than a restatement of the same decision.
 
-Section 6 scores every counter across independent sweeps by count correctness and
+§5 scores every counter across independent sweeps by count correctness and
 stability. Change-point is retained in the productive path purely to *localise*
 capacities once the count is fixed.
 
@@ -775,7 +912,7 @@ a third machine is identified as future work (§6).
 matter to the method.**
 
 | Machine | Arch | Core probed | L1d | L2 | L3 | Line | Page | Status |
-| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| :-------------- | :--------- | :------------- | :--------: | :--------------: | :------------: | :-------: | :-------: | :---------------- |
 | Apple M1 | ARM64 | Firestorm P-core | 128 KiB | 12 MiB | — (8 MiB SLC) | 128 B | 16 KiB | validated |
 | Intel Core i5-13450HX | x86-64 | Raptor Lake P-core | 48 KiB | 1.25 MiB/core | 20 MiB (shared) | 64 B | 4 KiB | validated (L1/L2/L3, 2 MiB huge pages) |
 
@@ -992,7 +1129,7 @@ Capacities are the median of per-sweep detections; latencies are from the
 aggregate minimum-over-sweeps curve.**
 
 | Level | Detected capacity | Median latency | p5–p95 | Documented (per P-core) | Note |
-| :--- | :---: | :---: | :---: | :---: | :--- |
+| :-------- | :----------: | :---------: | :------------: | :------------: | :---------------------- |
 | L1 Cache | 55.7 KiB | 1.57 ns | 1.57–1.69 ns | 48 KiB | +16.0 % (0.21 oct) — **matches** |
 | L2 Cache | 1.2 MiB | 4.71 ns | 4.69–4.77 ns | 1.25 MiB | −1.5 % (0.02 oct) — **matches** |
 | L3 Cache | 19.7 MiB | 20.81 ns | 14.53–25.70 ns | 20 MiB (shared) | −1.5 % (0.02 oct) — **matches** |
@@ -1021,7 +1158,7 @@ method still cut at **2** (the fast-vs-slow L1+L2 vs memory split). So huge page
 the *productive* count and the L3 recall, but "one counter correct on every
 architecture" remains too strong — the closely-spaced deep bands are still a regime
 where the count-free cross-checks scatter, the 1-D under-counting behaviour
-anticipated in §2.4.
+anticipated in §2.5.
 
 **Table 10: Model selection — Elbow and Silhouette *disagree* (Fig. 8).** Unlike the
 M1 (Table 6, where both criteria select k = 3), on the huge-page Intel sweep the
@@ -1135,18 +1272,21 @@ own. It was run as `lat_mem_rd -N 5 -t 512 128` (512 MiB maximum working set,
 converted to Auto-Echo's format by `crosscheck_lmbench.py` and overlaid with
 `compare_curves.py` (Fig. 9). For each of the four plateaus Auto-Echo discovered,
 Table 13 reports Auto-Echo's median latency, lmbench's median over the *same*
-working-set range, and their ratio.
+working-set range, and their ratio. The Auto-Echo curve here is the three-sweep run
+of `data/intel_i5_13450hx/`, retained because `lmbench` was swept against it; its
+latencies differ from Table 9's ten-sweep values by 1–9%.
 
 **Table 13: External cross-check — Auto-Echo vs lmbench `lat_mem_rd` per plateau
 (Intel i5-13450HX).** Auto-Echo ran natively on Windows with 2 MiB huge pages;
 lmbench ran under WSL2 on 4 KiB pages with the `-t` (`thrash_initialize`,
-deliberately TLB-hostile) initialiser. The comparison is therefore like-for-like
-only in the inner hierarchy, whose working set fits within TLB reach on either
-allocation.
+deliberately TLB-hostile) initialiser. The two allocations are therefore comparable
+only where the working set stays within first-level TLB reach — which, as the
+point-wise ratios of Table 14 show, holds for L1 alone rather than for the inner
+hierarchy as a whole.
 
 | Level (WSS range) | Auto-Echo median | lmbench median | Ratio (lmbench / AE) |
 | :--- | :---: | :---: | :---: |
-| L1 (to 55.7 KiB) | 1.59 ns | 1.93 ns | 1.21× |
+| L1 (to 55.7 KiB) | 1.59 ns | 1.93 ns | 1.22× |
 | L2 (59.7 KiB – 1.2 MiB) | 4.75 ns | 5.99 ns | 1.26× |
 | L3 (1.3 – 13.9 MiB) | 22.94 ns | 35.35 ns | 1.54× |
 | DRAM (14.9 – 512 MiB) | 123.25 ns | 160.16 ns | 1.30× |
@@ -1364,7 +1504,7 @@ labelled by run directory rather than by nominal condition, because the middle r
 own dispersion shows it was not in fact quiescent.**
 
 | Run | Sweeps | Detected L3 knee | Levels found | L3 median latency | DRAM median | Machine CPU |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| :---------------------- | :-----: | :------------: | :--------: | :----------: | :--------: | :-------: |
 | `intel_ci` — quiet (§5.3) | 10 | **19.7 MiB** (9/10; 13.9 in 1) | 4 in 10/10 | 20.8 ns | ~122 ns | ~23 % |
 | `intel_l3_quiesced` — matched control, contaminated | 3 | 13.9, 9.85, 9.85 MiB | 5, 5, 4 | 20–26 ns ‡ | ~126 ns | ~23 % |
 | `intel_l3_loaded` — 8 × 32 MiB stream | 3 | **3.5 MiB** (3/3) | 4 in 3/3 | ~65 ns † | ~174 ns | ~36 % |
@@ -1475,7 +1615,7 @@ that arm64 does not honour, and no equivalent unprivileged large-page API replac
 them. So the asymmetry is not an implementation gap that more effort would close; it
 is a difference in what the two platforms permit an unprivileged tool to do, of
 exactly the kind that motivated this project's design in the first place. The ARM64
-path lacks a user-space cache flush (§2.3) *and* lacks a user-space page-size
+path lacks a user-space cache flush (§2.4) *and* lacks a user-space page-size
 control, and in both cases the method had to be built around the absence of a
 primitive rather than its presence. What remains beyond reach on this platform is
 the quantitative attribution — how much of the M1's cleaner deep curve is the larger
@@ -1500,7 +1640,7 @@ preference to it.*
 each machine, and the hardware parameters that differ.**
 
 | Metric | Apple M1 (ARM64) | Intel i5-13450HX (x86-64) |
-| :--- | :---: | :---: |
+| :---------------------- | :------------------: | :----------------------------------: |
 | Cache line size | 128 B | 64 B |
 | OS base page size | 16 KiB | 4 KiB |
 | Pages spanned by a 16 MiB working set | 1,024 | 4,096 |
@@ -1536,7 +1676,7 @@ flagged. No value is interpolated: each Intel row is its own end-to-end huge-pag
 sweep, and the selected count is **4** at every measured density.
 
 | Machine | Points/octave | Curve points | Selected `k` | Silhouette | Elbow | DBSCAN | CP-knee |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| :---------------- | :----------------: | :-----------: | :-----------: | :-------------: | :---------: | :------------: | :------------: |
 | Apple M1 (measured) | 5 | 94 | **3** | 0.912 | 3 | 3 | 3 |
 | Apple M1 (measured) | 10 | 182 | **3** | 0.898 | 3 | 3 | 3 |
 | Apple M1 (measured) | 20 | 348 | **3** | 0.896 | 3 | 3 | 3 |
@@ -1707,7 +1847,9 @@ Following the structure of the reference paper's own threats section [1]:
   drops the deep plateau to ~122 ns, and **recovers the L3** (19.7 MiB, −1.5 % of
   nominal), lifting recall to 3/3 (§5.3). It remains a genuine limit
   in that the full x86 hierarchy is separable only under huge pages, not the default
-  4 KiB pages, and performance-counter corroboration is still desirable. The same
+  4 KiB pages, and performance-counter corroboration — via PAPI [33] or LIKWID [34],
+  which expose the DTLB-miss and page-walk-cycle events directly — is still
+  desirable. The same
   confounder is visible from the other side in the lmbench cross-check, where a
   4 KiB-page comparator diverges progressively from ~256 KiB upward and its L3 knee
   is pulled in to 6.5 MiB (§5.3.1).
@@ -1723,7 +1865,10 @@ Following the structure of the reference paper's own threats section [1]:
 - **SLC attribution.** Automatic model selection reports the L2 and SLC as one
   merged mid-band; the finer split (forced only at an explicit penalty ~ 4) is
   *consistent with* a distinct L2 and the M1 SLC but is not uniquely attributable
-  to it without per-core-type, cross-core and counter-based experiments.
+  to it without per-core-type, cross-core and counter-based experiments; the
+  reverse-engineering literature on Apple Silicon [13, 46, 66] is the natural source
+  for the geometry such an attribution would need, and documents none of it at the
+  level of detail required.
 - **Measurement bias.** Latency is the *minimum* over repeats (a lower envelope
   that hides variability); and although the sweep order is now seed-randomised to
   decorrelate size from thermal drift, sustained thermal throttling remains a
@@ -1843,7 +1988,8 @@ memory" user right (no kernel module or driver). Remaining directions:
   **contention** — a controlled shared-L3 load collapses the detected knee to 3.5 MiB
   while the quiet ten-sweep run recovers 19.7 MiB in nine of ten sweeps (§5.3.2). What
   remains is to reproduce that on a machine whose L3 is *architecturally* less
-  contended (a different LLC topology), to sweep contention intensity rather than
+  contended (a different LLC topology — Hackenberg et al. [67] document how widely
+  these differ across x86 generations), to sweep contention intensity rather than
   compare two levels of it, and to add performance-counter corroboration — including a
   direct core-frequency reading (`APERF`/`MPERF`), which the invariant TSC cannot
   supply and which §5.3.2 needs to close its account of the loaded latencies. (The
@@ -1861,7 +2007,7 @@ memory" user right (no kernel module or driver). Remaining directions:
   resolved the Intel L3 cannot be applied to Apple Silicon from user space at all.**
   This is a genuine asymmetry in what the platforms permit an unprivileged tool to
   do, and it sits squarely within this dissertation's theme — the ARM64 path lacks a
-  cache flush (§2.3) *and* lacks a page-size control, and in both cases the method
+  cache flush (§2.4) *and* lacks a page-size control, and in both cases the method
   had to be designed around the absence rather than the presence of a primitive.
   What it leaves open is the question a page-size control would have settled:
   whether the merged L2/SLC mid-band of §5.2 is a genuine capacity feature or partly
@@ -1918,9 +2064,19 @@ memory" user right (no kernel module or driver). Remaining directions:
   **sustained** departure — *k* consecutive points above threshold — would remove
   this single-point sensitivity and is the prerequisite for promoting the hybrid
   from opt-in to default; the flatness gate alone is demonstrably insufficient.
-- **Second dimension (stride sweep).** Sweeping stride as well as size would
-  recover **cache line size and associativity**, extending Auto-Echo from a
-  1-D slice to the full memory mountain [11].
+- **Second dimension (stride sweep), and a better instrument for it.** Sweeping
+  stride as well as size would recover **cache line size and associativity**,
+  extending Auto-Echo from a 1-D slice to the full memory mountain [11]. It should be
+  said plainly, however, that a stride sweep is the *weaker* tool for both parameters.
+  Eviction-set construction recovers associativity and set structure exactly rather
+  than as a discontinuity in a noisy curve, and the near-linear algorithms of Vila et
+  al. [26] make it practical; Maurice et al. [40] and Irazoqui et al. [41]
+  demonstrate the same approach recovering an undocumented slice hash function. The
+  cost is the trade §2.3 sets out — those methods are architecture-specific and
+  assume a known target, so adopting them would purchase resolution with exactly the
+  portability this project is about. A defensible design would offer both: the
+  portable sweep by default, an opt-in eviction-set stage where the platform permits
+  it.
 - **Automatic model selection (delivered), and what remains constant.** The
   change-point penalty that earlier required an operator to set a value *per
   machine* has been eliminated: the level count is set by Silhouette model
@@ -2016,7 +2172,50 @@ control lifts the limit.
 [21] D. Arthur and S. Vassilvitskii, "k-means++: The advantages of careful seeding," in *Proc. 18th ACM-SIAM Symp. on Discrete Algorithms (SODA)*, 2007, pp. 1027–1035.  
 [22] R. Tibshirani, G. Walther, and T. Hastie, "Estimating the number of clusters in a data set via the gap statistic," *J. Royal Statistical Society B*, vol. 63, no. 2, pp. 411–423, 2001.  
 [23] D. Molka, D. Hackenberg, R. Schöne, and M. S. Müller, "Memory performance and cache coherency effects on an Intel Nehalem multiprocessor system," in *Proc. 18th Int. Conf. on Parallel Architectures and Compilation Techniques (PACT)*, 2009, pp. 261–270.  
-[24] S. Manegold, "The Calibrator (v0.9e), a cache-memory and TLB calibration tool," 2004. [Online]. Available: https://www.cwi.nl/~manegold/Calibrator/
+[24] S. Manegold, "The Calibrator (v0.9e), a cache-memory and TLB calibration tool," 2004. [Online]. Available: https://www.cwi.nl/~manegold/Calibrator/  
+[25] D. A. Osvik, A. Shamir, and E. Tromer, "Cache attacks and countermeasures: The case of AES," in *Proc. Cryptographers' Track at the RSA Conf. (CT-RSA)*, LNCS vol. 3860, 2006, pp. 1–20 (the Prime+Probe methodology).  
+[26] P. Vila, B. Köpf, and J. F. Morales, "Theory and practice of finding eviction sets," in *Proc. IEEE Symp. on Security and Privacy (S&P)*, 2019, pp. 39–54.  
+[27] F. Broquedis, J. Clet-Ortega, S. Moreaud, N. Furmento, B. Goglin, G. Mercier, S. Thibault, and R. Namyst, "hwloc: A generic framework for managing hardware affinities in HPC applications," in *Proc. 18th Euromicro Int. Conf. on Parallel, Distributed and Network-based Processing (PDP)*, 2010, pp. 180–186 (the `lstopo` topology tool).  
+[28] Intel Corporation, *Intel 64 and IA-32 Architectures Software Developer's Manual, Volume 2A: Instruction Set Reference, A–M*, 2025 (`CPUID` leaf 04H, deterministic cache parameters).  
+[29] Intel Corporation, "Intel Memory Latency Checker (MLC), v3.11," 2024. [Online]. Available: https://www.intel.com/content/www/us/en/developer/articles/tool/intelr-memory-latency-checker.html  
+[30] W. A. Wulf and S. A. McKee, "Hitting the memory wall: Implications of the obvious," *ACM SIGARCH Computer Architecture News*, vol. 23, no. 1, pp. 20–24, 1995.  
+[31] J. L. Hennessy and D. A. Patterson, *Computer Architecture: A Quantitative Approach*, 6th ed. Morgan Kaufmann, 2019.  
+[32] U. Drepper, "What every programmer should know about memory," Red Hat Inc., 2007. [Online]. Available: https://people.freebsd.org/~lstewart/articles/cpumemory.pdf  
+[33] D. Terpstra, H. Jagode, H. You, and J. Dongarra, "Collecting performance data with PAPI-C," in *Tools for High Performance Computing 2009*, Springer, 2010, pp. 157–173.  
+[34] J. Treibig, G. Hager, and G. Wellein, "LIKWID: A lightweight performance-oriented tool suite for x86 multicore environments," in *Proc. 39th Int. Conf. on Parallel Processing Workshops (ICPPW)*, 2010, pp. 207–216.  
+[35] C. Percival, "Cache missing for fun and profit," in *Proc. BSDCan*, 2005.  
+[36] Y. Yarom and K. Falkner, "FLUSH+RELOAD: A high resolution, low noise, L3 cache side-channel attack," in *Proc. 23rd USENIX Security Symp.*, 2014, pp. 719–732.  
+[37] D. Gruss, C. Maurice, K. Wagner, and S. Mangard, "Flush+Flush: A fast and stealthy cache attack," in *Proc. 13th Int. Conf. on Detection of Intrusions and Malware, and Vulnerability Assessment (DIMVA)*, 2016, pp. 279–299.  
+[38] C. Disselkoen, D. Kohlbrenner, L. Porter, and D. Tullsen, "Prime+Abort: A timer-free high-precision L3 cache attack using Intel TSX," in *Proc. 26th USENIX Security Symp.*, 2017, pp. 51–67.  
+[39] F. Liu, Y. Yarom, Q. Ge, G. Heiser, and R. B. Lee, "Last-level cache side-channel attacks are practical," in *Proc. IEEE Symp. on Security and Privacy (S&P)*, 2015, pp. 605–622.  
+[40] C. Maurice, N. Le Scouarnec, C. Neumann, O. Heen, and A. Francillon, "Reverse engineering Intel last-level cache complex addressing using performance counters," in *Proc. 18th Int. Symp. on Research in Attacks, Intrusions and Defenses (RAID)*, 2015, pp. 48–65.  
+[41] G. Irazoqui, T. Eisenbarth, and B. Sunar, "Systematic reverse engineering of cache slice selection in Intel processors," in *Proc. Euromicro Conf. on Digital System Design (DSD)*, 2015, pp. 629–636.  
+[42] Q. Ge, Y. Yarom, D. Cock, and G. Heiser, "A survey of microarchitectural timing attacks and countermeasures on contemporary hardware," *J. Cryptographic Engineering*, vol. 8, no. 1, pp. 1–27, 2018.  
+[43] N. P. Jouppi, "Improving direct-mapped cache performance by the addition of a small fully-associative cache and prefetch buffers," in *Proc. 17th Int. Symp. on Computer Architecture (ISCA)*, 1990, pp. 364–373.  
+[44] T. C. Mowry, M. S. Lam, and A. Gupta, "Design and evaluation of a compiler algorithm for prefetching," in *Proc. 5th Int. Conf. on Architectural Support for Programming Languages and Operating Systems (ASPLOS)*, 1992, pp. 62–73.  
+[45] B. Falsafi and T. F. Wenisch, *A Primer on Hardware Prefetching*. Morgan & Claypool (Synthesis Lectures on Computer Architecture), 2014.  
+[46] J. R. S. Vicarte, M. Flanders, R. Paccagnella, G. Garrett-Grossman, A. Morrison, C. W. Fletcher, and D. Kohlbrenner, "Augury: Using data memory-dependent prefetchers to leak data at rest," in *Proc. IEEE Symp. on Security and Privacy (S&P)*, 2022, pp. 1491–1505.  
+[47] B. Chen, Y. Wang, P. Shome, C. W. Fletcher, D. Kohlbrenner, R. Paccagnella, and D. Genkin, "GoFetch: Breaking constant-time cryptographic implementations using data memory-dependent prefetchers," in *Proc. 33rd USENIX Security Symp.*, 2024, pp. 1117–1134.  
+[48] A. Bhattacharjee and M. Martonosi, "Characterizing the TLB behavior of emerging parallel workloads on chip multiprocessors," in *Proc. 18th Int. Conf. on Parallel Architectures and Compilation Techniques (PACT)*, 2009, pp. 29–40.  
+[49] T. W. Barr, A. L. Cox, and S. Rixner, "Translation caching: Skip, don't walk (the page table)," in *Proc. 37th Int. Symp. on Computer Architecture (ISCA)*, 2010, pp. 48–59.  
+[50] M. Talluri and M. D. Hill, "Surpassing the TLB performance of superpages with less operating system support," in *Proc. 6th Int. Conf. on Architectural Support for Programming Languages and Operating Systems (ASPLOS)*, 1994, pp. 171–182.  
+[51] J. Navarro, S. Iyer, P. Druschel, and A. Cox, "Practical, transparent operating system support for superpages," in *Proc. 5th USENIX Symp. on Operating Systems Design and Implementation (OSDI)*, 2002, pp. 89–104.  
+[52] Y. Kwon, H. Yu, S. Peter, C. J. Rossbach, and E. Witchel, "Coordinated and efficient huge page management with Ingens," in *Proc. 12th USENIX Symp. on Operating Systems Design and Implementation (OSDI)*, 2016, pp. 705–721.  
+[53] A. Panwar, S. Bansal, and K. Gopinath, "HawkEye: Efficient fine-grained OS support for huge pages," in *Proc. 24th Int. Conf. on Architectural Support for Programming Languages and Operating Systems (ASPLOS)*, 2019, pp. 347–360.  
+[54] A. Basu, J. Gandhi, J. Chang, M. D. Hill, and M. M. Swift, "Efficient virtual memory for big memory servers," in *Proc. 40th Int. Symp. on Computer Architecture (ISCA)*, 2013, pp. 237–248.  
+[55] R. L. Thorndike, "Who belongs in the family?" *Psychometrika*, vol. 18, no. 4, pp. 267–276, 1953 (the origin of the elbow criterion).  
+[56] T. Caliński and J. Harabasz, "A dendrite method for cluster analysis," *Communications in Statistics*, vol. 3, no. 1, pp. 1–27, 1974.  
+[57] D. L. Davies and D. W. Bouldin, "A cluster separation measure," *IEEE Trans. Pattern Analysis and Machine Intelligence*, vol. 1, no. 2, pp. 224–227, 1979.  
+[58] D. Pelleg and A. W. Moore, "X-means: Extending K-means with efficient estimation of the number of clusters," in *Proc. 17th Int. Conf. on Machine Learning (ICML)*, 2000, pp. 727–734.  
+[59] G. W. Milligan and M. C. Cooper, "An examination of procedures for determining the number of clusters in a data set," *Psychometrika*, vol. 50, no. 2, pp. 159–179, 1985.  
+[60] A. Grønlund, K. G. Larsen, A. Mathiasen, J. S. Nielsen, S. Schneider, and M. Song, "Fast exact k-means, k-medians and Bregman divergence clustering in 1D," 2017. [Online]. Available: https://arxiv.org/abs/1701.07204  
+[61] C. Truong, L. Oudre, and N. Vayatis, "ruptures: Change point detection in Python," 2018. [Online]. Available: https://arxiv.org/abs/1801.00826  
+[62] P. Fryzlewicz, "Wild binary segmentation for multiple change-point detection," *Annals of Statistics*, vol. 42, no. 6, pp. 2243–2281, 2014.  
+[63] A. J. Scott and M. Knott, "A cluster analysis method for grouping means in the analysis of variance," *Biometrics*, vol. 30, no. 3, pp. 507–512, 1974.  
+[64] I. E. Auger and C. E. Lawrence, "Algorithms for the optimal identification of segment neighborhoods," *Bulletin of Mathematical Biology*, vol. 51, no. 1, pp. 39–54, 1989.  
+[65] B. Jackson, J. D. Scargle, D. Barnes, S. Arabhi, A. Alt, P. Gioumousis, E. Gwin, P. Sangtrakulcharoen, L. Tan, and T. T. Tsai, "An algorithm for optimal partitioning of data on an interval," *IEEE Signal Processing Letters*, vol. 12, no. 2, pp. 105–108, 2005.  
+[66] H. Ravichandran, W. T. Na, J. Lang, and M. Yan, "PACMAN: Attacking ARM pointer authentication with speculative execution," in *Proc. 49th Int. Symp. on Computer Architecture (ISCA)*, 2022, pp. 685–698.  
+[67] D. Hackenberg, D. Molka, and W. E. Nagel, "Comparing cache architectures and coherency protocols on x86-64 multicore SMP systems," in *Proc. 42nd Int. Symp. on Microarchitecture (MICRO)*, 2009, pp. 413–422.
 
 ---
 
