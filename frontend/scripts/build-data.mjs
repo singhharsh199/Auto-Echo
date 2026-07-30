@@ -39,12 +39,45 @@ const MACHINES = [
     color: "#D55E00",
     status: "validated",
   },
-  // To add a third machine: copy an entry above, point `dir` at its output
+  // To add a machine permanently: copy an entry above, point `dir` at its output
   // directory under data/, and fill every field from that machine's own
   // validation_report.md -- `core` and `lineSize` are reported in §5.1 of the
   // dissertation and must not be guessed. `lib/series.ts` assigns the on-screen
   // series colour, so `color` here is only a fallback.
 ];
+
+/**
+ * Ad-hoc machine from the environment, so someone who has just run the pipeline
+ * can see *their own* sweep without editing this file:
+ *
+ *     AUTOECHO_RUN=my_run npm run dev
+ *
+ * `AUTOECHO_RUN` is a directory name under data/. The descriptive fields are
+ * unknown for an arbitrary machine, so they are labelled "measured on this host"
+ * rather than guessed; everything the dashboard actually plots (curve, levels,
+ * estimators, ground truth) comes from that directory's own outputs.
+ */
+const EXTRA_RUN = process.env.AUTOECHO_RUN;
+if (EXTRA_RUN) {
+  if (!existsSync(join(DATA, EXTRA_RUN))) {
+    console.error(
+      `AUTOECHO_RUN="${EXTRA_RUN}" but data/${EXTRA_RUN} does not exist.\n` +
+        `Run the pipeline first, e.g.:\n` +
+        `  python -m autoecho --method wss --max-mb 256 --output-dir data/${EXTRA_RUN}`
+    );
+    process.exit(1);
+  }
+  MACHINES.push({
+    id: "local",
+    dir: EXTRA_RUN,
+    name: `This machine (${EXTRA_RUN})`,
+    arch: process.arch,
+    core: "measured on this host",
+    lineSize: "auto-detected",
+    color: "#CC79A7",
+    status: "measured",
+  });
+}
 
 // ---------------------------------------------------------------- CSV parsing
 
