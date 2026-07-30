@@ -1,244 +1,710 @@
-# Auto-Echo — Tutoring Session Log & Viva Study Guide
+# Auto-Echo — Viva Preparation Pack
 
-This file has two parts:
+Three parts, in order of urgency:
 
-- **Part 1 — Live Session Log.** Grows as the tutoring session progresses. Each
-  entry records one sub-concept (explained on the Novice → Intermediate → Expert
-  ladder), the question asked, the student's answer, and the tutor's verification.
-- **Part 2 — Question Bank.** 57 standalone viva questions, written up front.
+- **Part 1 — The 20-Minute Opening.** The complete script to deliver when the
+  examiner says "introduce your project", with delivery cues, a cheat card of every
+  number, and 35 anticipated questions with answers.
+- **Part 2 — Tutoring Session Log.** Concepts worked through on the Novice →
+  Intermediate → Expert ladder, with questions asked, answers given, and
+  verification.
+- **Part 3 — Question Bank.** 67 standalone viva questions across five modules.
 
-> **Note.** Three questions in Part 2 (1.5, 2.1, 3.9) deliberately contain a false
+> **Note.** Three questions in Part 3 (1.5, 2.1, 3.9) deliberately contain a false
 > premise, because they encode misconceptions that are easy to acquire about this
-> project — two of which appeared in the original curriculum brief. Spotting the
-> false premise *is* the answer.
+> project — two of which appeared in the original project brief. Spotting the false
+> premise *is* the answer.
 
 ---
 
-# Part 1 — Live Session Log
+# Part 1 — The 20-Minute Opening
+
+**Structural decision: lead with the failure, not the success.** It signals
+immediately that you can evaluate your own work critically, and it makes everything
+that follows read as earned rather than asserted.
+
+## Timing map
+
+| Time | Section | Goal |
+|:---|:---|:---|
+| 0:00–2:00 | The question | Hook |
+| 2:00–4:00 | Why it's hard | Show domain command |
+| 4:00–6:30 | **The failure** | Establish honesty early |
+| 6:30–11:00 | The method | The contribution |
+| 11:00–15:30 | Results | Evidence |
+| 15:30–18:00 | **Limitations** | Own them before they're asked |
+| 18:00–20:00 | Contributions | Close |
+
+---
+
+## `0:00` — The question
+
+> "Every program's performance depends on the CPU's cache hierarchy — how many
+> levels there are, and how large each one is. But that information is essentially
+> invisible to ordinary software.
+>
+> Today, you get it by **asking someone**. The operating system, through a library
+> like `hwloc`. An architecture-specific instruction, like x86's `CPUID` leaf 4. Or a
+> vendor tool, like Intel's Memory Latency Checker.
+>
+> Every one of those presupposes that **somebody has already written the answer
+> down.**
+>
+> My question was: **what if nobody has?**
+>
+> Can a program discover the hierarchy *for itself* — from timing alone, with no
+> privileges, no vendor tables, and no architecture-specific instructions?"
+
+**Delivery.** Speak slowly; this is the setup. Count the three tools on your
+fingers. After "what if nobody has?" **pause for two seconds** — that is the moment
+the examiner engages.
+
+**Trap to avoid.** Never call those tools "bad". They are *more accurate* than this
+project on every machine they support. The correct framing is: *"Each is more
+accurate than my tool on the hardware it supports — that's precisely the point."*
+
+**Backup evidence if challenged on practical relevance.** The M1 has a ~8 MiB
+System-Level Cache. `sysctl` reports nothing about it, `lstopo` shows nothing, and
+ARM has no `CPUID` at all — yet it is visible in the latency curve. This can be
+demonstrated live (see Part 2, Side-note V.2). It is justification from your own
+data, not a hypothetical.
+
+**Anticipated questions**
+
+| Question | Answer |
+|:---|:---|
+| "Who actually needs this?" | "Portable software that tunes itself — cache-blocked kernels, database join buffers, auto-tuners like ATLAS. And any attempt to characterise a part nobody has documented." |
+| "Isn't `hwloc` good enough?" | "It's more accurate than my tool on every machine it supports. But it *reads*; it doesn't measure. Its chain of trust ends at a table someone wrote. Mine doesn't need one." → **full treatment: "The one question you must not fumble", end of Part 1** |
+| "What if the OS is lying, or you're in a VM?" | "Then the reference standard is wrong, and every tool that trusts it is wrong with it. A measurement-based tool at least fails *visibly* — the curve won't match the claim." |
+| "When does a table genuinely not exist?" | The M1 SLC — demonstrable live. Absent from `sysctl` and `lstopo`, no `CPUID` on ARM, yet present in the curve. |
+
+---
+
+## `2:00` — Why it's hard
+
+> "Three things make this hard.
+>
+> **First, the hardware actively hides the signal.** Prefetchers predict your access
+> pattern and fetch data early, which flattens the very steps I need to detect.
+>
+> **Second, the clock is too coarse.** Apple Silicon's timer ticks every 41.7
+> nanoseconds. An L1 hit is about 1.5. Timing a single access measures the timer, not
+> the memory.
+>
+> **Third, the obvious primitives aren't portable.** x86 has `clflush` to evict a
+> cache line. ARM gives user space nothing equivalent. So any method built on explicit
+> flushing cannot cross architectures."
+
+**The numbers behind each barrier**
+
+| Barrier | Key figure | Solution (save it for the method section) |
+|:---|:---|:---|
+| Prefetching | — | Randomised pointer chase; removes the need for a flush entirely |
+| Coarse timer | 41.7 ns tick vs 1.53 ns L1 = **27× coarser** | 2²⁰ hops per window → ~38,500 ticks → ±0.0026% |
+| No portable flush | `clflush` is x86-only; nothing in ARM/macOS user space | WSS design overflows the cache *by construction* |
+
+**A deliberate structural choice.** The dissertation's §2.4 lists **four** barriers;
+the fourth is address translation (TLB). Mention only **three** here. The first three
+*shaped the design* — they were known in advance. The fourth is a *finding*,
+discovered when the Intel L3 vanished. Revealing all four now would spoil your best
+result. §2.4 states this explicitly: *"The first three shape the probe's design; the
+fourth bounds what it can resolve."*
+
+**Delivery.** Move quickly — three points in two minutes. This is setup, not
+argument. **Do not give the solutions yet**, or the method section will be empty.
+
+**Anticipated questions**
+
+| Question | Answer |
+|:---|:---|
+| "Why not just disable the prefetcher?" | "On Intel you can, via an MSR — but that needs ring 0, and the whole premise is unprivileged operation. On Apple Silicon there is no such control at all." |
+| "How can you report 1.5 ns with a 41.7 ns clock?" | "I don't measure one access. I measure the total of 1,048,576 accesses — about 38,500 ticks — so ±1 tick is ±0.0026% on that total. Dividing by an exact integer adds no error." |
+| "ARM has `DC CIVAC` for cache maintenance." | "It exists in the architecture, but macOS does not expose data-cache maintenance to user space — it traps. The design had to assume no flush primitive at all." |
+
+---
+
+## `4:00` — The failure
+
+> "My first implementation was a portable approximation of the reference paper's
+> method: flush a line, write it, time the load back.
+>
+> **It failed on both architectures.** And when I investigated why, the reason was not
+> what I expected.
+>
+> I had assumed the problem was ARM's missing `clflush` — an architectural
+> limitation. So I ran the same baseline on Intel, *with* a working `clflush` and
+> `rdtscp`. It still failed. Two tiers on a four-level machine — and the tier it
+> labelled 'L1' measured **178 nanoseconds**, two orders of magnitude above that
+> core's true 1.6-nanosecond L1.
+>
+> The real fault was structural. **Writing a line immediately before timing its read
+> pulls it into L1, so every measurement is an L1 hit by construction.** The flush
+> accomplishes nothing, because the store simply re-populates the line.
+>
+> That mattered, because it meant a per-architecture port would not have helped. The
+> measurement *design* had to change — and the redesign had to satisfy three
+> constraints at once: never write before reading, never time a single access, and
+> never require a flush."
+
+**Delivery.** This is your strongest section. Most candidates hide failure; you are
+leading with it. Speak confidently, not apologetically. The key beat is that you
+refuted **your own first explanation** — that is scientific maturity, and examiners
+are listening for exactly it.
+
+**Anticipated questions**
+
+| Question | Answer |
+|:---|:---|
+| "Why not just fix the baseline?" | "Because the fault wasn't a bug, it was the design. Write-before-read guarantees an L1 hit *by construction* — no amount of fixing the flush repairs that. The remedy had to be a measurement that never writes before reading." |
+| "Isn't 178 ns just `rdtscp` overhead? A better timer might rescue it." | "Partly — the absolute values are timer-dominated. But that's the second barrier, not the first. Even with a perfect timer, every access would still be an L1 hit, so you'd measure L1 precisely and never see L2, L3 or DRAM. Two tiers on a four-level machine is the structural failure; 178 ns is the timing failure on top of it." |
+| "How do you know write-before-read is the cause?" | "Because I removed the confound. The 'x86-bound' explanation predicts it works where `clflush` exists. I ran it on Intel with a working `clflush` and `rdtscp` — the two conditions whose absence the explanation blamed — and it still failed. That falsifies the architectural account and leaves the structural one." |
+| "Did you try the LOF filter the paper proposes?" | "Yes — §4 evaluates it directly. LOF flagged about 0.04% of samples, and 100% of the survivors still lay exactly on integer timer-tick multiples. That's direct evidence the failure is structural, not filterable noise." |
+| "Why keep the failed baseline in the repository?" | "Because it's the evidence for the design decision. Deleting it would leave the redesign unmotivated. It ships as `--method samples` and is reproducible." |
+
+---
+
+## `6:30` — The method
+
+> "The redesign has two layers, and I want to be precise about which one is my
+> contribution.
+>
+> **The measurement layer is classical.** It's a working-set-size pointer chase,
+> descending from Saavedra and Smith, and from McVoy and Staelin's `lat_mem_rd` in
+> lmbench. Claiming it as novel would be indefensible.
+>
+> Each slot in a buffer holds the address of the next, linked into a single random
+> Hamiltonian cycle. Because each load's address is the *result* of the previous
+> load, the CPU cannot run ahead — so the prefetcher is defeated with **no flush
+> instruction at all**. That solves barriers one and three together, and it's why the
+> method is portable rather than x86-only.
+>
+> For the coarse clock, I time a million dependent hops in a single window and
+> divide. I'm not measuring one access precisely; I'm measuring a total of about
+> 38,000 timer ticks, where the ±1 tick quantisation is 0.003 percent.
+>
+> **The inference layer above it is the contribution.** Given a noisy latency curve,
+> two questions must be answered with no prior knowledge of the machine: *how many*
+> levels exist, and *where* each boundary lies.
+>
+> I answer them separately, because they have different sufficient statistics. *How
+> many levels* is a property of the multiset of latency values — a machine with four
+> plateaus has four modes regardless of where they fall. Order doesn't matter. *Where
+> the boundaries are* is a property of the ordering, and order matters entirely.
+>
+> So counting is done by clustering the log-latencies, and localisation by
+> change-point detection constrained to that count.
+>
+> The counting step uses **exact one-dimensional k-means by dynamic programming** —
+> Fisher's 1958 result, known today as `Ckmeans.1d.dp`. This matters because in one
+> dimension the optimal partition is provably *contiguous in sorted order*, which
+> collapses the search space from a Stirling number of partitions to a choice of k−1
+> split points, and admits an exact solution. So unlike Lloyd's algorithm, the
+> partition returned is the **global optimum** for every candidate count —
+> deterministic, with no seeding, no restarts, and no random state to report.
+>
+> The number of levels is then chosen by the Silhouette coefficient, which is not
+> monotone in k and therefore has an interior maximum — meaning it can select a count
+> **without a penalty term.** That's the point: the penalty parameter is exactly the
+> per-machine tuning knob this project set out to eliminate."
+
+**Delivery.** "Claiming it as novel would be indefensible" — say this line. Examiners
+wait for it. Saying it first means it can never be used against you.
+
+**Anticipated questions**
+
+| Question | Answer |
+|:---|:---|
+| "Lloyd's gave the same answer — so what did the DP buy?" | "Nothing to the numbers, and I say so explicitly — the audit shows the migration changed no reported result. What it changed is the *status* of the claim: the count is no longer contingent on a solver's initialisation. It converts an empirical observation about two curves into a property of the algorithm." |
+| "How do you know the DP is actually optimal?" | "I verified it against brute force — every partition enumerated exhaustively for small n, including all *non-contiguous* set partitions, which tests the contiguity lemma itself and not just the recurrence. 420 checks, zero mismatches." |
+| "Why Silhouette rather than BIC or the gap statistic?" | "Two reasons. §5 *ranks* the estimators against each other, so scoring the mixture by BIC and k-means by Silhouette would confound the model with the criterion. And BIC is badly behaved here — within-plateau variance is extremely heterogeneous (the Intel L1 band spans 0.38 ns p5–p95, DRAM spans 26 ns), so a mixture is rewarded for adding narrow components inside a single physical plateau." |
+| "Counting ignores order — isn't that discarding information?" | "Order isn't discarded by the pipeline; it's used at the stage where it's informative. *How many levels* is a property of the multiset — four plateaus give four modes wherever they sit. *Where the boundaries are* is a property of the ordering, and that's exactly what the change-point stage consumes." |
+| "Why segment on log-latency?" | "Without the log, squared-error cost is dominated by the deep steps. The L1→L2 step is about 3 ns and the L2→DRAM step about 110 ns; on raw nanoseconds the inner hierarchy is invisible to the cost function. In log space both steps are comparable in magnitude." |
+| "What's the complexity? Grønlund has O(n log n)." | "Mine is O(kn²). At 94–388 points the quadratic fill costs milliseconds, so the simpler recurrence is retained deliberately — I cite the sharper bound rather than pretending it doesn't exist." |
+| "Why not just use PELT with a fixed penalty?" | "That's the knob I'm removing. Tables 9 and 13 show the *same* hand-set penalty giving different counts on the two machines — which is precisely the per-machine tuning constant the project exists to eliminate." |
+
+---
+
+## `11:00` — Results
+
+> "I validated on two machines — an Apple M1 and an Intel Raptor Lake core. ARM64 and
+> x86-64, the same code path on both.
+>
+> On the **M1**: three levels, all five estimators agreeing, both documented caches
+> recovered within one octave.
+>
+> On the **Intel**: four levels, all three documented caches matched, with a mean
+> absolute capacity error of 6.3 percent over ten sweeps.
+>
+> But the two most interesting results are the ones where something went **wrong**.
+>
+> **First — page size can hide an entire cache.** With the default 4 KiB pages, the
+> Intel L3 was invisible. The curve saturated at 143 nanoseconds by about 4 megabytes
+> and stayed flat — because once the working set exceeds the TLB's reach, every
+> dependent load triggers a page-table walk whose own accesses miss to DRAM. The
+> curve reaches DRAM latency *before* the L3 boundary is ever seen.
+>
+> Under a 2 MiB huge-page allocation, the same code recovers all four levels. So the
+> binding constraint on user-space discovery of a deep hierarchy is **address
+> translation, not the inference layer.** That's a controlled result, not an
+> observation — it's the only variable I changed.
+>
+> **Second — a shared cache does not measure as its nominal size.** What a single
+> core recovers of a shared L3 is the portion actually available to it. I tested that
+> directly: under an eight-worker streaming load, the detected L3 falls from 19.7
+> megabytes to 3.5. The quantity being measured is real — but it's *availability*,
+> not capacity.
+>
+> Finally, I validated against prior art rather than only against myself. I built
+> lmbench's `lat_mem_rd` and swept the same silicon. Both tools recover the same
+> four-tier staircase, with an almost identical L1-to-L2 step — 3.0× for mine, 3.1×
+> for lmbench.
+>
+> And then the stronger test: I applied my **inference layer** to lmbench's curve,
+> with nothing seeded from my own result. It selects the correct level count, and
+> recovers both TLB-unmasked capacities — L1 to within 17 percent, L2 to within 10.
+> So it isn't only my probe that works; the inference generalises to another tool's
+> data."
+
+**Delivery.** "The two most interesting results are the ones where something went
+wrong" — this phrase does a lot of work. It shows you are *interpreting* results, not
+reciting them. Point at Fig. 7 for the huge-page result.
+
+**Anticipated questions**
+
+| Question | Answer |
+|:---|:---|
+| "Only two machines?" | "Yes — and both consumer laptop performance cores. An AMD Zen part is the highest-value addition, because its L3 is a per-CCX victim cache — a genuinely different topology — which would test whether the contention finding generalises or is a ring-LLC artefact." |
+| "Couldn't the 3.5 MiB knee just be noise?" | "Three sweeps, all three gave 3.5 MiB with zero spread. And the direction is predicted, not fitted: more contention, smaller mappable share." |
+| "Every latency rose under load — is the capacity comparison still valid?" | "The knee is a working-set *size*, and it is frequency-invariant. A uniform multiplier shifts every latency but cannot move the size at which a plateau ends. I report the uniform rise honestly and note that its magnitude exceeds what turbo range alone explains." |
+| "The lmbench comparison is confounded — different OS, page size, stride." | "Agreed, and I say so. lmbench ran under WSL2 on 4 KiB pages at a 128-byte stride against my 64-byte line spacing. The L2-band divergence follows from the page size, and the decisive control — running my own tool inside that same WSL2 — was cheap and I did not take it. That's the first thing I'd do next." |
+| "Why 3 sweeps on the M1 but 10 on the Intel?" | "The Intel run was repeated to ten after the L3 aggregation issue surfaced; the M1 was not. That's a genuine inconsistency in experimental power between the two headline results, and it's stated in §5.1." |
+| "The M1 L1 is +23% off — isn't that a lot?" | "It's a soft-knee artefact, and it's directional rather than random. A random-access set moderately larger than the cache still enjoys high residency, so average latency rises gently past nominal. The onset estimator recovers 128 KiB exactly — but it's catastrophic elsewhere, so the bounded-error edge estimator remains the default." |
+| "With the SLC, is it three levels or four?" | "Three is the reproducible answer. The L2 is 12 MiB and the SLC about 8 MiB — under one octave apart, roughly seven sample points at my density — so the method merges them. Forcing a finer split is stable across penalties 3 to 6, and is reported as a *candidate* sub-structure, not a headline level." |
+
+---
+
+## `15:30` — Limitations
+
+> "I want to state the limits before you ask.
+>
+> **The hardware base is narrow.** Two machines, both consumer laptop performance
+> cores. Every generalisation rests on n equals two, of one class. That is the binding
+> constraint on this dissertation.
+>
+> **There are no inferential statistics.** The contention result is three sweeps
+> against three, resting on effect size rather than a hypothesis test.
+>
+> **And one result I had to correct.** I originally reported the L3 at 13.9
+> megabytes — a 30 percent under-read — and I built an explanation around it. That
+> figure was substantially an artefact of **my own aggregation**. I was detecting the
+> boundary on the minimum-over-sweeps curve. The minimum is the right statistic for a
+> *latency*, because interference can only add time. It is the wrong statistic for a
+> *knee*, because the lower envelope departs the plateau early. Detected per sweep,
+> nine of ten give 19.7 megabytes — within 1.5 percent of nominal. I withdrew the
+> original figure and the explanation I had built on it.
+>
+> **And a limitation of the tool itself.** The level count is stable on a quiet
+> machine. But on a contaminated run, the same counter reported **seven levels on a
+> four-level machine** — and nothing in the pipeline detects that condition. For a
+> discovery tool, failing in a way the user cannot see is the most serious limitation
+> I have."
+
+**Delivery.** Counter-intuitive but decisive: this section is what separates a good
+dissertation from an exceptional one. Deliver it confidently. You are not confessing
+weakness — you are demonstrating that you can evaluate your own work. Make eye
+contact here.
+
+**Anticipated questions**
+
+| Question | Answer |
+|:---|:---|
+| "If the aggregation was wrong, how did it reach a draft?" | "Because it was plausible and I had a mechanism ready to explain it — contention. That's the trap: a wrong number with a good story survives longer than a wrong number without one. It surfaced when I ran ten sweeps and looked at per-sweep detections rather than the aggregate." |
+| "How would you fix the count instability?" | "A dispersion self-diagnostic. The condition is already detectable from data the pipeline computes — the contaminated run's L1 band spans 1.57–3.52 ns against 1.57–1.69 ns when quiet. A within-plateau spread check could flag or refuse such a run rather than publishing its count." |
+| "What would a third machine buy you?" | "AMD Zen tests the one claim I cannot currently defend: that the shared-cache contention effect generalises across LLC topologies. Zen's per-CCX victim L3 is architecturally different from Intel's ring-shared L3. Either outcome — it reproduces or it doesn't — is a result." |
+| "Why no statistics?" | "No good reason. With ten sweeps per condition, a rank test and bootstrap intervals are straightforward. It's the cheapest remaining improvement and I don't defend its absence." |
+
+---
+
+## `18:00` — Contributions and close
+
+> "So the contribution is three things.
+>
+> **One:** a portable, flush-free measurement path, validated across two instruction
+> set architectures.
+>
+> **Two:** an unsupervised inference layer that determines the **shape** of a
+> hierarchy — not just its parameters given a known shape — with no per-machine
+> tuning constant, and with the counting step solved exactly rather than
+> heuristically.
+>
+> **Three:** two controlled experiments that delimit where the method works. The
+> huge-page control isolates address translation as the binding constraint. The
+> contention experiment shows that what you recover of a shared cache is
+> availability, not capacity.
+>
+> The honest summary is that this is a **portable, low-resolution instrument** in a
+> space whose high-resolution corner — eviction-set construction, from the
+> side-channel literature — is already well mapped. It trades precision for the
+> ability to be dropped onto hardware nobody has described yet.
+>
+> Thank you."
+
+**Anticipated questions**
+
+| Question | Answer |
+|:---|:---|
+| "Isn't this just lmbench with clustering bolted on?" | "The measurement is lmbench's, and I say so in §2.2. But lmbench gives you a curve and *you* read the knees off it — a human decides how many levels there are. My contribution is that nobody reads anything. And I validated that inference on lmbench's *own* curve, where it recovers the correct count without being told." |
+| "Couldn't the side-channel people do this better?" | "For associativity and line size, yes — decisively. Eviction-set construction recovers set structure exactly. I say so in §2.3, and concede that the stride sweep §6 proposes is the weaker tool. The trade is that those methods are architecture-specific and assume a known target; mine buys portability with resolution." |
+| "What would you do differently?" | "Run my own tool inside the WSL2 environment I had already built lmbench in. It would have removed the cross-check confound and given me a third platform, for one evening's work." |
+| "Is this publishable?" | "As a workshop paper with the AMD data added, I think so — the inference-transfer result and the huge-page control are the parts that would carry it. Not without a third machine and statistics." |
+| "Your biggest weakness in one sentence?" | "Two machines of the same class, so every generalisation rests on n = 2 — and I'd defend the work anyway, because the controlled experiments are valid on the machines I have, and the limits are stated rather than hidden." |
+
+---
+
+## Cheat card — memorise these
+
+| Claim | Number |
+|:---|:---|
+| Timer vs L1 | 41.7 ns vs 1.53 ns (**27×**) |
+| Hops per timing window | **2²⁰** ≈ 38,500 ticks, ±0.003% |
+| Baseline failure | **2 tiers**; "L1" = **178 ns** vs true **1.6 ns** |
+| M1 result | 3 levels, **2/2** caches, +23.0% / +16.1% |
+| Intel result | 4 levels, **3/3** caches, mean error **6.3%** (10 sweeps) |
+| 4 KiB pages | saturates at **143 ns** by ~4 MiB; L3 invisible |
+| 2 MiB pages | ~**122 ns**; L3 recovered at **19.7 MiB** (−1.5%) |
+| Contention | 19.7 → **3.5 MiB** (**−83%**) |
+| lmbench L1→L2 step | **3.0× vs 3.1×** |
+| Inference transfer | k = 4 correct; L1 **+16.7%**, L2 **−10.0%**, **2/3** |
+
+---
+
+## The one question you must not fumble
+
+> *"If I can just run `lstopo` and see the whole hierarchy in one second, what is
+> this project for?"*
+
+Every examiner asks some version of this. A weak answer here undoes twenty minutes of
+good work.
+
+### Three answers that lose marks
+
+| Tempting answer | Why it fails |
+|:---|:---|
+| "hwloc is inaccurate" | It isn't. It is **more** accurate than this project on every machine it supports. |
+| "hwloc needs privileges" | It doesn't. It runs unprivileged, exactly as this project does. |
+| "hwloc isn't portable" | It is **more** portable — it supports far more platforms than the two validated here. |
+
+⚠️ **Note the exposure in §1.** The motivation paragraph currently says *"no
+privileges, no per-architecture instructions"*. Against hwloc, "no privileges" is a
+**null differentiator** — an examiner will simply reply "neither does hwloc". The real
+differentiators live in §2.2 and §5.3, not in the motivation.
+
+### The honest answers, strongest first
+
+**1. hwloc reports what is *documented*; this project measures what is *there*.**
+Demonstrable live. `lstopo` on the M1 shows `L2 (12MB)` and then straight to
+`NUMANode` — yet a ~8 MiB System Level Cache sits between them. No `sysctl` entry, no
+`CPUID` on ARM. And it is not invisible in the data: §5.2's curve shows an **18 MiB
+-wide ramp** from ~12 to ~30 MiB where a machine with only L2 and DRAM would show a
+sharp step. hwloc cannot simply add it, because there is no OS interface to read it
+from — it would have to hardcode it per chip, which is exactly "a table someone
+wrote".
+
+**2. Topology is not behaviour.** `lstopo` reports the Intel L3 as 20 MiB. That is
+true, and on 4 KiB pages it is also unreachable — §5.3 shows the curve saturating at
+143 ns by ~4 MiB because page-walk cost arrives before the L3 does. hwloc reports
+20 MiB regardless. *Line to use:* **"hwloc told me the L3 was twenty megabytes. My
+measurement told me I couldn't reach it. Both were correct, and only one of them
+changed my code."**
+
+**3. Nominal vs effective capacity — deploy carefully.** Under an eight-worker load
+the L3 a single core can map falls from 19.7 MiB to 3.5 MiB; hwloc still reports
+20 MiB, because it is a static architectural fact. For choosing a cache-blocking
+factor or sizing a join buffer, the *available* capacity is the number that matters,
+and it cannot be looked up.
+⚠️ **Do not oversell this.** The validation scores accuracy *against nominal ground
+truth*, so the project's own success metric treats nominal as the target. Claiming
+"nominal is the wrong target" creates an internal inconsistency an examiner may spot.
+*Safe framing:* "The project targets nominal capacity and validates against it. What
+the contention experiment revealed is that a shared cache's measurable capacity is
+load-dependent — a finding about the limits of the method, and incidentally a
+quantity hwloc cannot report at all." Present it as **discovered**, not as founding
+motivation.
+
+**4. The chain of trust can break — weakest; mention once.** New silicon before OS
+support lands, VMs that do not pass through topology, emulated or embedded targets.
+Real, but there is **no evidence for it in the dissertation**, so state it briefly and
+move on.
+
+### The concession that makes the rest credible
+
+> "If your question is 'what caches does this machine have', and it's a documented,
+> supported, quiet machine — **use hwloc. It's better than my tool at that job.** I'm
+> not competing with it."
+
+Examiners trust a candidate who concedes the obvious point. Refusing to concede makes
+everything else sound like special pleading.
+
+### The 60-second answer
+
+> "Fair question — and if the machine is documented, hwloc is the better tool. I'm not
+> competing with it.
+>
+> But hwloc doesn't measure anything. It reads what the OS and firmware expose, so its
+> answer is only as complete as the table behind it. **Two things follow.**
+>
+> **First, that table can be incomplete.** This laptop has an 8 megabyte System Level
+> Cache. `lstopo` shows L2 and then memory — nothing in between. `sysctl` has no entry
+> for it, and ARM has no CPUID. But it's visible in my latency curve as an
+> eighteen-megabyte-wide transition where there should be a sharp step. I can show you
+> that in about thirty seconds.
+>
+> **Second, topology is not behaviour.** hwloc told me the Intel L3 was twenty
+> megabytes. On the default four-kilobyte pages, my measurement showed I couldn't
+> reach it — address-translation cost saturates the curve before the L3 boundary
+> appears. Both statements are true. Only the measured one would change how you write
+> the code.
+>
+> So hwloc answers *'what did the manufacturer put in this chip?'* My tool answers
+> *'what can a thread actually observe here?'* Most of the time you want the first.
+> When the table is incomplete, or when behaviour and topology disagree, you want the
+> second."
+
+---
+
+**Rehearsal.** Time yourself. Most candidates overshoot. If you're at 24 minutes, cut
+detail from Results (shorten the lmbench passage) — **never cut Limitations.**
+
+**Before the viva.** Appendix A.3 declares that every reference was consulted by the
+author, and the bibliography grew from 24 to 67 entries late in the project. Either
+read them or amend the clause. If asked "have you read Vila et al.?", you need an
+answer. That is an integrity question, not a technical one, and it carries more
+weight.
+
+---
+
+# Part 2 — Tutoring Session Log
+
+Concepts worked through on the Novice → Intermediate → Expert ladder, with the
+question asked, the answer given, and verification.
+
+**Score so far:** 1.1(a) ✔ · 1.2(b) ✔ · 1.3(a) ✔ · 1.3(b) ✔½ · 1.4 pending
 
 ## Module 1 — The C Probe
 
-### Concept 1.1 — Python ki jagah C kyun? (Why C, not Python)
+### Concept 1.1 — Why C rather than Python
 
-**🟢 Novice.** Hummingbird ke wing beat ko haath wali stopwatch se time karne ki
-koshish karo. Tumhara reaction time ~250 ms hai, wing beat ~20 ms. Tum bird ko
-nahi, *khud ko* measure kar rahe ho. Instrument hamesha signal se tez hona chahiye.
+**Novice.** Try timing a hummingbird's wingbeat with a hand-operated stopwatch. Your
+reaction time is ~250 ms; the wingbeat is ~20 ms. You are measuring *yourself*, not
+the bird. The instrument must always be faster than the signal.
 
-**🟡 Intermediate.** Measured L1 hit = **1.53 ns** (`data/validation_report.md`).
-Ek CPython bytecode dispatch ≈ **30–100 ns** — yaani instrument signal se 20–60×
-slow. Isliye timing loop C mein hai: `src/autoecho/wss/wss_probe.c:364`, ek line —
-`p = (void **)(*p);`. Python (`wss/__init__.py`) sirf orchestration karta hai:
-sizes choose karna, `measure_wss()` call karna, ticks→ns convert karna. Hot path
-ko kabhi touch nahi karta.
+**Intermediate.** The measured L1 hit is **1.53 ns** (`data/validation_report.md`). A
+single CPython bytecode dispatch costs roughly **30–100 ns** — the instrument would
+be 20–60× slower than the signal. So the timing loop lives in C:
+`src/autoecho/wss/wss_probe.c:364`, one line — `p = (void **)(*p);`. Python
+(`wss/__init__.py`) only orchestrates: choose sizes, call `measure_wss()`, convert
+ticks to nanoseconds, assemble a DataFrame. It never touches the hot path.
 
-**🔴 Expert.** Speed se bhi bada reason: **memory layout control**. CPython mein
-`list[i]` ek boxed `PyObject` ka pointer hai jo heap mein kahin bhi ho sakta hai —
-addresses allocator decide karta hai, tum nahi. Poora experiment is baat par
-depend karta hai ki slot *k* base se exactly `k × line_size` bytes par ho, kyunki
-capacity infer hi isse hoti hai ki *kaunsa address kaunse cache set* par map karta
-hai. Python yeh guarantee nahi de sakta. Perfect Python timer bhi ek aisa working
-set measure karta jiska actual footprint tum state hi nahi kar sakte.
+**Expert.** More fundamental than speed is **memory layout control**. In CPython,
+`list[i]` is a pointer to a boxed `PyObject` that may live anywhere on the heap — the
+allocator decides addresses, not you. The entire experiment depends on slot *k*
+sitting exactly `k × line_size` bytes from a page-aligned base, because capacity is
+inferred from *which addresses map to which cache sets*. Python cannot guarantee
+this. Even an infinitely fast Python timer would measure a working set whose true
+footprint you could not state.
 
-**❓ Question 1.1** — Ek colleague kehta hai: "NumPy use karo, uske inner loops toh
-C mein hi hain." Do-part answer chahiye:
-(a) Quantitative argument — apne actual L1 number aur bytecode dispatch cost se.
-(b) Aur ek *second, independent* reason jo speed se bilkul alag ho.
+**Question 1.1** — A colleague says: "Write it in Python, just use NumPy — its inner
+loops are compiled C anyway." Answer in two parts: (a) the quantitative argument,
+using the real L1 figure and bytecode dispatch cost; (b) a second, *independent*
+reason that has nothing to do with speed.
 
 **Student's answer:**
 > (a) We can't measure a signal of 1.53 ns with Python as it can measure a signal
 > within the range of 30–100 ns. Also NumPy is beneficial in continuous memory
 > allocation rather than random memory allocation.
-> (b) Nahi pata.
+> (b) Don't know.
 
-**Verification — (a): strong pass ✔️**
+**Verification — (a): strong pass ✔**
 
-Core principle sahi pakda: instrument signal se coarser hai. Sharpening ke liye
-ek number add karo — probe har measurement mein 2²⁰ = 1,048,576 hops karta hai:
+The core principle is right: the instrument is coarser than the signal. To sharpen
+it, add a number — the probe performs 2²⁰ = 1,048,576 hops per measurement:
 
 | | Time |
 |:---|:---|
-| Asli signal (1,048,576 × 1.53 ns) | ~1.6 ms |
+| Real signal (1,048,576 × 1.53 ns) | ~1.6 ms |
 | Python loop (× ~50 ns/hop) | ~52 ms |
 
-Yaani measurement **97% interpreter, 3% memory** hoti — hierarchy noise mein doob
-jaati. Yeh "20–60× slow" se zyada convincing hai.
+The measurement would be **97% interpreter, 3% memory** — the hierarchy drowns in
+that noise. This is more convincing than "20–60× slower".
 
-*Correction:* "NumPy continuous memory ke liye behtar hai" — instinct sahi,
-wording imprecise. Precise: NumPy tab fast hai jab ek operation **poore array par
-ek saath** apply ho (`arr * 2`) — Python sirf ek baar involved hota hai. **Pointer
-chase vectorize ho hi nahi sakta**, kyunki hop *n+1* ko hop *n* ka *result*
-chahiye. Isliye NumPy ka poora advantage yahaan **structurally inapplicable** hai;
-loop Python mein hi chalega aur (a) wali problem wapas aa jayegi.
+*Correction:* "NumPy is beneficial in continuous memory allocation" — right instinct,
+imprecise wording. Precisely: NumPy is fast when one operation applies to a **whole
+array at once** (`arr * 2`), so Python is involved only once. **A pointer chase
+cannot be vectorised**, because hop *n+1* needs hop *n*'s result. NumPy's entire
+advantage is therefore **structurally inapplicable**; the loop would run in Python
+and you are back to problem (a).
 
 **Verification — (b): taught**
 
-**Core answer:** NumPy array sirf **values** (int64/float64/bool) store kar sakta
-hai — **addresses nahi**. Pointer chase ko chahiye
-`*(void **)slot = (void *)next;` (`wss_probe.c:347`) — har slot ke andar agle slot
-ka *real memory address*. NumPy mein tumhe indices store karne padenge, aur tab
-teen cheezein tootti hain:
+**Core answer:** a NumPy array can only hold **values** (int64/float64/bool) — **not
+addresses**. The chase requires `*(void **)slot = (void *)next;`
+(`wss_probe.c:347`) — each slot holding the *real memory address* of the next. In
+NumPy you would store indices instead, and three things break:
 
-1. **Hardware ko dependency dikhni band.** C: `p = *p;` — ek load, jiska result hi
-   agla address hai; CPU ka load unit ek saaf dependent-load chain dekhta hai
-   (isiliye `lfence` ki zaroorat nahi). Python: `i = arr[i]` = bounds check →
-   PyObject unbox → address compute → load → box. CPU sirf interpreter bookkeeping
-   dekhta hai; measurement ka theoretical foundation hi gayab.
-2. **Alignment control khatam.** C maangta hai `posix_memalign(&p, 16384, size)`
-   (`AE_ALIGN`, `wss_probe.c:137`). NumPy 16 KiB alignment maangne ka tarika nahi
-   deta; non-aligned buffer par cache line do pages par straddle kar sakti hai aur
-   "kitne distinct pages touch huye" wala hisaab bigad jaata hai.
-3. **Huge pages impossible.** `VirtualAlloc(..., MEM_LARGE_PAGES, ...)` NumPy se
-   maanga hi nahi ja sakta — matlab §5.3 ka poora huge-page result (jisne Intel ka
-   20 MiB L3 unmask kiya) exist hi nahi karta.
+1. **The dependency becomes invisible to the hardware.** In C, `p = *p;` is one load
+   whose result is the next address; the CPU's load unit sees a clean dependent chain
+   (which is why no `lfence` is needed). In Python, `i = arr[i]` is bounds check →
+   PyObject unbox → address computation → load → box. The CPU sees interpreter
+   bookkeeping, and the theoretical foundation of the measurement disappears.
+2. **Alignment control is lost.** C requests `posix_memalign(&p, 16384, size)`
+   (`AE_ALIGN`, `wss_probe.c:137`). NumPy offers no way to request 16 KiB alignment;
+   on a non-aligned buffer a cache line can straddle two pages, corrupting the count
+   of distinct pages touched.
+3. **Huge pages become impossible.** `VirtualAlloc(..., MEM_LARGE_PAGES, ...)` cannot
+   be requested through NumPy — meaning the entire §5.3 huge-page result, which
+   unmasked the Intel 20 MiB L3, would not exist.
 
-**Yaad rakhne ka tareeka:** (a) kehta hai *"Python dheema hai"*. (b) kehta hai
-*"chahe Python infinitely fast ho jaaye, tab bhi experiment invalid rahega"* —
-kyunki tum aisa working set measure karoge jiska actual memory footprint tum state
-hi nahi kar sakte. Yahi (b) ko (a) se independent banata hai.
+**How to remember it:** (a) says *"Python is slow."* (b) says *"even if Python were
+infinitely fast, the experiment would still be invalid"* — because you would measure
+a working set whose actual memory footprint you cannot state. That is what makes (b)
+independent of (a).
 
----
+### Side-note 1.1a — What is CPython? (student asked)
 
-### Side-note 1.1a — "CPython" kya hai? (student ne poocha)
+**Novice.** **Python** is a *language* — rules, grammar, a specification. **CPython**
+is one *implementation* of it: the actual program that reads and runs your `.py`
+file. It is itself written in C, hence "**C**Python". Analogy: "Hindi" is a language;
+a person *speaking* Hindi is an implementation. Other implementations: PyPy (JIT),
+Jython (JVM), MicroPython.
 
-**🟢 Novice.** **Python** = language (rules, grammar — ek specification).
-**CPython** = us language ka ek *implementation* — woh actual program jo `.py`
-file padhta aur chalata hai. Woh khud C mein likha gaya hai, isliye naam
-"**C**Python". Analogy: "Hindi" language hai; Hindi *bolne wala insaan*
-implementation hai. Doosre implementations: PyPy (JIT), Jython (JVM),
-MicroPython.
-
-**🟡 Intermediate.** Iska proof repo mein literally likha hai:
-`src/autoecho/wss_probe_c.cpython-313-darwin.so` — filename mein "cpython-313"
-(CPython 3.13) aur "darwin" (macOS) encoded hai. Confirmed: implementation =
-CPython, version = 3.13.2. `wss_probe.c` mein 23 jagah CPython C-API use hua hai
+**Intermediate.** The proof is in the repository:
+`src/autoecho/wss_probe_c.cpython-313-darwin.so` — the filename literally encodes
+"cpython-313" (CPython 3.13) and "darwin" (macOS). Confirmed: implementation =
+CPython, version = 3.13.2. `wss_probe.c` uses the CPython C-API in 23 places
 (`#include <Python.h>`, `PyArg_ParseTuple`, `PyFloat_FromDouble`,
-`Py_BEGIN_ALLOW_THREADS`, `PyErr_NoMemory`). Isliye `setup.py` ka
-`python_requires=">=3.11"` sirf language version nahi — CPython C-API
-compatibility ka statement hai. PyPy par yeh extension bina recompile ke load
-nahi hoga.
+`Py_BEGIN_ALLOW_THREADS`, `PyErr_NoMemory`). So `setup.py`'s
+`python_requires=">=3.11"` is not merely a language-version statement — it is a
+CPython C-API compatibility statement. The extension will not load on PyPy without
+recompilation.
 
-**🔴 Expert.** "30–100 ns per bytecode dispatch" aata kahan se hai: `.py` →
-bytecode → `ceval.c` ka eval loop. Har instruction par fetch + decode + dispatch
-(often-mispredicted branch), stack se `PyObject*` operands, runtime type check,
-`Py_INCREF`/`Py_DECREF` refcounting, aur naye objects ke liye heap allocation.
-Python mein `x = 5` ek heap-allocated object hai (refcount + type ptr + value);
-C mein `int x = 5` ek register hai. Yeh cost dynamic typing + refcounting +
-interpretation ki honest price hai — data pipelines ke liye worth it, 1.53 ns
-measure karne ke liye nahi. Related: `Py_BEGIN_ALLOW_THREADS`
-(`wss_probe.c:353`) GIL release karta hai — GIL bhi CPython-specific hai — taaki
-interpreter timing window ke andar interfere na kare.
+**Expert.** Where "30–100 ns per bytecode dispatch" comes from: `.py` → bytecode →
+the eval loop in `ceval.c`. Per instruction: fetch, decode, dispatch (an
+often-mispredicted branch), pop `PyObject*` operands from the stack, runtime type
+check, `Py_INCREF`/`Py_DECREF` reference counting, and heap allocation for new
+objects. In Python, `x = 5` creates a heap-allocated object with a refcount and type
+pointer; in C, `int x = 5` is a register. That cost is the honest price of dynamic
+typing plus reference counting plus interpretation — worth paying for data pipelines,
+not for measuring 1.53 ns. Related: `Py_BEGIN_ALLOW_THREADS` (`wss_probe.c:353`)
+releases the GIL, which is itself a CPython-specific mechanism.
 
----
+### Side-note 1.1b — What is the GIL, and what is its trade-off? (student asked)
 
-### Side-note 1.1b — GIL kya hai, aur iska trade-off? (student ne poocha)
+**Novice.** GIL = **Global Interpreter Lock**. A kitchen with 8 cooks and 8 chopping
+boards but **only one knife** — only one cook can chop at a time. Cooks = threads,
+boards = CPU cores, knife = GIL. In CPython only **one thread executes Python
+bytecode at a time**, even on a 10-core machine. So `threading` cannot make CPU-bound
+Python work truly parallel.
 
-**🟢 Novice.** GIL = **Global Interpreter Lock**. Kitchen mein 8 cooks aur 8
-chopping boards, lekin **chaaku ek hi** — ek time par sirf ek cook chop kar sakta
-hai. Cooks = threads, boards = CPU cores, chaaku = GIL. CPython mein ek time par
-sirf **ek thread Python bytecode** chala sakta hai, chahe 10-core machine ho.
-Isliye `threading` se CPU-bound Python kaam truly parallel nahi hota.
+**Intermediate.** `wss_probe.c:353` `Py_BEGIN_ALLOW_THREADS` and `:373`
+`Py_END_ALLOW_THREADS` — "put the knife down / pick it back up". Between them only
+plain C variables appear (`p`, `g_sink`, `best`, `c0`, `c1`) — not a single
+`PyObject`. **Golden rule:** you must not touch any Python object between BEGIN and
+END. Calling `PyFloat_FromDouble()` inside would create a refcount race and cause
+random, hard-to-reproduce interpreter crashes.
 
-**🟡 Intermediate.** `wss_probe.c:353` `Py_BEGIN_ALLOW_THREADS` aur `:373`
-`Py_END_ALLOW_THREADS` — "chaaku wapas rakh diya / wapas le liya". Beech mein
-sirf plain C variables hain (`p`, `g_sink`, `best`, `c0`, `c1`) — ek bhi
-`PyObject` nahi. **Golden rule:** BEGIN/END ke beech koi Python object touch nahi
-karna. Agar galti se `PyFloat_FromDouble()` andar call ho jaata, toh refcount
-race hota aur interpreter random, reproduce-karne-mein-mushkil crash deta.
+**Expert — why the GIL exists.** Reference counting. `Py_INCREF`/`Py_DECREF` are not
+atomic — at machine level they are *read → add → write*. Two unlocked threads
+incrementing the same refcount can lose an increment, so the object is freed while a
+reference is still live: **use-after-free**, a crash or a security bug. Three
+solutions existed: (1) a lock per object — makes single-threaded code ~2× slower;
+(2) atomic refcounts — cache-line bouncing, slow; (3) **one global lock** —
+single-threaded code stays fast and C extensions stay simple. Guido chose (3). The
+GIL is not a bug; it is a **deliberate trade-off**.
 
-**🔴 Expert — GIL exist kyun karta hai.** Reference counting ki wajah se.
-`Py_INCREF`/`Py_DECREF` atomic nahi hain — machine level par *read → add → write*
-teen steps hain. Do threads bina lock ke same refcount badhayein toh ek increment
-kho jaata hai → object tab free ho jaata hai jab reference abhi zinda hai →
-**use-after-free** (crash ya security bug). Teen solutions the: (1) per-object
-lock — single-thread code 2× slow; (2) atomic refcounts — cache-line bouncing,
-slow; (3) **ek global lock** — single-thread fast, C extensions simple. Guido ne
-(3) chuna. GIL bug nahi, **deliberate trade-off** hai.
+**The trade-off — what you gain:** fast single-threaded Python (no per-object locking
+overhead); simple C extensions (`wss_probe.c` uses no mutex at all and is still
+safe); simple, predictable refcounting with no GC pauses. **What you lose:** CPU-bound
+threads cannot run in parallel — on a 10-core machine, pure-Python CPU work still
+gets one core. **Escape routes:** `multiprocessing` (separate process = separate
+GIL), a GIL-releasing C extension (this project), `asyncio` for I/O-bound work.
+Python 3.13 ships an experimental free-threaded build (PEP 703) that removes the GIL,
+though C extensions must be compiled separately for it.
 
-**Trade-off — kya milta hai:** single-threaded Python fast (koi per-object lock
-overhead nahi); C extensions likhna aasaan (`wss_probe.c` ek bhi mutex use nahi
-karta aur phir bhi safe hai); refcounting simple, predictable, GC pauses nahi.
-**Kya khota hai:** CPU-bound threads parallel nahi chalte — 10-core machine par
-bhi pure-Python CPU kaam 1 core jitna. **Escape routes:** `multiprocessing`
-(alag process = alag GIL), GIL-releasing C extension (← yeh project), `asyncio`
-(I/O-bound). Python 3.13 mein experimental free-threaded build (PEP 703) hai jo
-GIL hata deta hai, par C extensions alag se compile karne padte hain.
+**The trade-off for this project (viva-relevant).** `measure_wss()` runs for seconds
+(a full sweep takes ~3 minutes); holding the GIL that long would freeze the whole
+interpreter, so releasing it is correct engineering. **Honest caveat:** releasing it
+also *permits* other Python threads to run during measurement and add noise — moot
+here because the pipeline is single-threaded. **Key insight:** because the C code
+releases the GIL, someone *could* run sweeps in parallel threads — and the result
+would be **completely wrong**, because those threads would evict each other's data
+from the shared L3. You would measure mutual interference, not hardware latency. That
+is exactly the effect §5.3.2 measures (8 workers drove the detected L3 from 19.7 MiB
+to 3.5 MiB). The probe is therefore **deliberately sequential** — not slow, but
+correct, with measured proof in the dissertation.
 
-**Is project ke liye trade-off (viva-relevant).** `measure_wss()` seconds tak
-chalta hai (poora sweep ~3 min); GIL pakde rakhna poore interpreter ko freeze
-karta, isliye release karna correct engineering hai. **Honest caveat:** release
-karne ka matlab hai doosre Python threads chal *sakte* hain aur measurement mein
-noise daal sakte hain — pipeline single-threaded hai isliye practically issue
-nahi. **Key insight:** kyunki C code GIL release karta hai, koi sweep ko parallel
-threads mein chala *sakta* hai — aur result **bilkul galat** aayega, kyunki woh
-threads ek hi shared L3 par ek doosre ka data evict karenge. Tab tum hardware
-latency nahi, ek doosre ki interference measure karoge. Yeh exactly wahi effect
-hai jo §5.3.2 measure karta hai (8 workers ne detected L3 ko 19.7 MiB → 3.5 MiB
-gira diya). Isliye probe **deliberately sequential** hai — yeh slowness nahi,
-**correctness** hai, aur uska measured proof dissertation mein maujood hai.
+### Concept 1.2 — Sequential vs randomised pointer-chasing
 
----
+**Novice.** A **smart librarian** is watching you. Ask for books 1, 2, 3, 4 and they
+learn the pattern, fetching book 5 before you ask — every book feels instant, and
+you wrongly conclude your desk is infinite. To measure the desk you must be
+**unpredictable** (book 400, then 17, then 933). That librarian is the **hardware
+prefetcher**.
 
-### Concept 1.2 — Sequential vs Randomized Pointer-Chasing
+**Intermediate.** Two distinct properties in `wss_probe.c` — do not conflate them:
+**randomness** (Fisher–Yates, line 337) stops the prefetcher learning a pattern;
+the **single Hamiltonian cycle** (line 344, `% nslots`) stops the chase falling into
+a short sub-loop.
 
-**🟢 Novice.** Library ka **smart librarian** tumhe dekh raha hai. Book 1,2,3,4
-maango toh woh pattern samajh kar book 5 pehle hi le aata hai — har book "instant"
-milti hai aur tum galat conclusion nikaaloge ki desk infinite hai. Desk measure
-karne ke liye **unpredictable** hona padega (book 400, 17, 933). Woh librarian =
-**hardware prefetcher**.
+**Expert.** The deep property is not randomness but **serialisation by data
+dependency**. In `p = *p`, load *n+1*'s address is load *n*'s result. The CPU's
+300-plus-entry reorder buffer *could* overlap 20 loads, but cannot, because the
+address is unknown until the previous load returns. That gives **MLP = 1** — pure
+load-to-use latency. Independent random accesses would also defeat the prefetcher,
+but the CPU would overlap 10–20 of them, so you would measure `latency ÷ MLP` — about
+a tenth of the truth, with the plateaus squashed together.
 
-**🟡 Intermediate.** `wss_probe.c` mein do alag properties: **randomness**
-(Fisher–Yates, line 337) prefetcher ko pattern seekhne se rokti hai; **single
-Hamiltonian cycle** (line 344, `% nslots`) chase ko chhote sub-loop mein phasne se
-rokta hai. Dono alag kaam karte hain — inhe conflate mat karna.
+### Side-note 1.2a — What is a Hamiltonian cycle? (student asked)
 
-**🔴 Expert.** Asli property randomness nahi, **serialisation by data dependency**
-hai. `p = *p` mein load *n+1* ka address load *n* ka result hai; CPU ka 300+ entry
-reorder buffer 20 loads overlap kar *sakta* hai par kar *nahi* sakta. Yaani
-**MLP = 1** — pure load-to-use latency. Independent random accesses se prefetcher
-tab bhi harta, par CPU 10–20 accesses overlap kar leta aur tum `latency ÷ MLP`
-measure karte (~1/10), plateaus squash ho jaate.
+**Novice.** A delivery route that visits **every house exactly once** and returns to
+the start. Named after William Rowan Hamilton. Wrong routes: visiting some houses
+twice and others never; or looping forever around just 10 houses.
 
-### Side-note 1.2a — "Hamiltonian cycle" kya hai? (student ne poocha)
+**Intermediate.** `order[]` is a shuffled permutation (0..n−1, each exactly once), so
+the chain is `order[0] → order[1] → … → order[n−1] → order[0]`. The `% nslots`
+**closes** the cycle, guaranteeing every slot is visited exactly once before any
+repeat.
 
-**🟢 Novice.** Delivery route jo **har ghar par exactly ek baar** jaaye aur wapas
-start par aaye. Naam William Rowan Hamilton se. Galat routes: kuch ghar do baar /
-kuch bilkul nahi; ya sirf 10 gharon ka chhota loop.
+### Side-note 1.2b — What does "prefetcher defeated" mean? (student asked)
 
-**🟡 Intermediate.** `order[]` ek shuffled permutation hai (0..n-1, har number ek
-baar). Chain: `order[0] → order[1] → … → order[n-1] → order[0]`. Woh `% nslots`
-cycle **band** karta hai — guarantee ki har slot exactly ek baar visit hoga.
+**Novice.** A prefetcher is hardware that guesses what you will read next and brings
+it into cache early. **"Defeated"** means it cannot guess, so at load time the data
+is *not* in cache and you pay the **real latency** — which is exactly what you want.
+If the prefetcher wins, the staircase disappears.
 
-### Side-note 1.2b — "Prefetcher haara hua" ka matlab? (student ne poocha)
+**Expert.** Next-line, stride and stream prefetchers are all defeated by a random
+chase. **But** Apple's M1 contains a **data memory-dependent prefetcher** (Augury,
+[46]) that follows pointer-like values — and the chase is exactly that pattern. §2.4
+states this honestly: the M1 curves are clean, so the effect is not large enough to
+flatten the staircase — but that is an **observation, not a guarantee**.
 
-**🟢 Novice.** Prefetcher = hardware unit jo guess karta hai ki tum aage kya
-maangoge aur data pehle hi cache mein le aata hai. **"Haara hua"** = guess nahi kar
-paa raha, toh load ke waqt data cache mein nahi hota aur **poori asli latency**
-bharni padti hai — **yahi humein chahiye**. Prefetcher jeeta toh staircase gayab.
-
-**🔴 Expert.** Types: next-line, stride, stream — teeno random chase se haar jaate
-hain. **Lekin** Apple M1 ka **DMP** (data memory-dependent prefetcher, Augury [46])
-pointer-jaisi values follow karta hai — aur chase exactly wahi pattern hai. §2.4
-mein honestly likha hai: M1 curves clean hain toh effect staircase flatten karne
-jitna bada nahi — **observation hai, guarantee nahi**.
-
-**❓ Question 1.2** — Agar proper cycle ke bajaye har slot mein *koi bhi* random
-slot ka address daal do (addresses ab bhi random, prefetcher ab bhi haara hua):
-(a) specifically kya galat hoga? (b) curve ke kaunse hisse mein dikhega, aur kyun?
+**Question 1.2** — If instead of a proper cycle you stored *any* random slot's
+address in each slot (addresses still random, prefetcher still defeated): (a) what
+specifically goes wrong? (b) where on the curve would it show, and why?
 
 **Student's answer:**
-> Hamiltonian cycle kya h? prefetcher haara hua h se kya mtlb h?
-> (a) pata nahi. (b) I think bade working set me problem dikhegi.
+> What is a Hamiltonian cycle? What does "prefetcher defeated" mean?
+> (a) Don't know. (b) I think the problem would show at large working sets.
 
-**Verification — (b): correct ✔️ / (a): taught**
+**Verification — (b): correct ✔ / (a): taught**
 
-**(b) sahi hai.** Reason yeh hai:
+**(b) is right.** The reason:
 
-Proper cycle ke bina tum ek **random functional graph** bana rahe ho, jismein chase
-**"ρ" (rho) shape** mein phas jaata hai — ek tail, phir ek chhota cycle jisse tum
-kabhi bahar nahi nikalte. Random functional graph theory: repeat hone se pehle tum
-sirf **≈ √(πn/2) ≈ √n distinct nodes** visit karte ho.
+Without a proper cycle you build a **random functional graph**, in which the chase
+falls into a **"ρ" (rho) shape** — a tail leading into a small cycle it never
+escapes. Random functional graph theory: before repeating, you visit only
+**≈ √(πn/2) ≈ √n distinct nodes**.
 
-Concrete (M1, 128 B line):
+Concretely (M1, 128 B line):
 
 | | Value |
 |:---|:---|
@@ -247,150 +713,183 @@ Concrete (M1, 128 B line):
 | Actually visited (√(πn/2)) | **~454 slots** |
 | Actual memory touched | **~57 KiB** |
 
-57 KiB M1 ke **128 KiB L1 mein fit ho jaata hai** — toh measurement ~1.5 ns (L1)
-bologi jabki 16 MiB ke liye ~9 ns+ hona chahiye tha.
+57 KiB fits inside the M1's **128 KiB L1** — so the measurement would report ~1.5 ns
+(L1 speed) when 16 MiB should give ~9 ns or more.
 
-Isliye error **sirf bade sets par** dikhta hai:
+The error therefore appears **only at large working sets**:
 
-| WSS | Intended | Actual (√n) | Fit kahan | Error |
+| WSS | Intended | Actual (√n) | Both fit in | Error |
 |:---|:---|:---|:---|:---|
-| 8 KiB | 8 KiB | ~1 KiB | dono L1 | nahi |
-| 16 MiB | 16 MiB | ~57 KiB | intended DRAM, actual L1 | **bahut bada** |
+| 8 KiB | 8 KiB | ~1 KiB | both L1 | none |
+| 16 MiB | 16 MiB | ~57 KiB | intended DRAM, actual L1 | **enormous** |
 
-Kyunki √n, n se bahut dheere badhta hai. **Curve ka shape:** thodi der upar jaata,
-phir **flatten** — DRAM plateau kabhi aata hi nahi. Aur sabse khatarnaak: curve
-**plausible dikhega** — koi crash nahi, koi error nahi, bas chupchaap galat. Isliye
-`% nslots` sirf modulo nahi, **correctness guarantee** hai.
+because √n grows far more slowly than n. **Curve shape:** it would rise for a while
+then **flatten** — the DRAM plateau would never appear. And most dangerously, the
+curve would look **plausible**: no crash, no error, just silently wrong. That is why
+`% nslots` is not merely a modulo — it is a **correctness guarantee**.
 
----
+### Concept 1.3 — Measuring a fine signal with a coarse clock
 
-### Concept 1.3 — Coarse clock se fine signal (batch amortisation)
+**Novice.** Your stopwatch shows only whole seconds, and the task takes 40 ms. Time
+it once → "0 seconds", useless. Do it 1000 times → 41 seconds → divide → 41 ms. The
+stopwatch is just as coarse; you **amortised** its coarseness.
 
-**🟢 Novice.** Stopwatch sirf poore seconds dikhati hai, kaam 40 ms ka hai. Ek baar
-karo → "0 seconds", bekaar. 1000 baar karo → 41 seconds → divide → 41 ms. Stopwatch
-utni hi coarse hai; tumne uski coarseness **amortise** kar di.
+**Intermediate.** Apple Silicon's timer runs at 24 MHz = **~41.7 ns/tick** (exactly
+`125/3`), against a **1.53 ns** L1 hit — **27× coarser**. Timing one access yields 0
+or 1 tick and nothing between. Solution: `DEFAULT_MIN_HOPS = 1 << 20`
+(`wss/__init__.py:44`), then `(c1-c0)/hops` (`wss_probe.c:363`). 2²⁰ × 1.53 ns ≈ 1.6
+ms ≈ 38,500 ticks, so the granularity's effect is 1/38,500 — sub-nanosecond effective
+resolution.
 
-**🟡 Intermediate.** Apple Silicon timer 24 MHz = **~41.7 ns/tick** (exactly
-`125/3`), aur L1 hit **1.53 ns** — timer **27× coarser**. Single access time karoge
-toh 0 ya 1 tick milega, beech mein kuch nahi. Solution: `DEFAULT_MIN_HOPS = 1 << 20`
-(`wss/__init__.py:44`) — 2²⁰ hops ek window mein, phir `(c1-c0)/hops`
-(`wss_probe.c:363`). 2²⁰ × 1.53 ns ≈ 1.6 ms ≈ 38,500 ticks → granularity ka asar
-1/38,500 → sub-nanosecond resolution.
+**Expert.** The trick is valid only if the per-hop cost is **stationary** across the
+window. If it drifts, you silently fold the drift into the estimate.
 
-**🔴 Expert.** Trick sirf tab valid hai jab per-hop cost window bhar mein
-**stationary** ho. Agar cost drift kare toh tum drift ko chupchaap estimate mein
-fold kar rahe ho.
-
-**❓ Question 1.3** — (a) Skeptical examiner: *"clock 41.7 ns ka hai, tum 1.53 ns
-kaise bol sakte ho? Yeh cheating hai!"* — ek line mein convince karo.
-(b) Amortisation ke liye kaunsi assumption chahiye, aur codebase mein kaunsa design
-decision use protect karta hai?
+**Question 1.3** — (a) A sceptical examiner says: *"The clock is 41.7 ns; how can you
+report 1.53 ns? That's cheating."* Convince them in one line. (b) What assumption does
+amortisation require, and which design decision in the codebase protects it?
 
 **Student's answer:**
-> (a) I will increase the number of iterations, then will divide by that number to
-> find 27 times finer latency.
-> (b) Per hop cost should be stationary.
+> (a) I will increase the number of iterations, then divide by that number to find a
+> 27× finer latency.
+> (b) Per-hop cost should be stationary.
 
-**Verification — (a): pass ✔️ (mechanism sahi, framing chahiye) / (b): half pass ✔️**
+**Verification — (a): pass ✔ (mechanism right, framing needed) / (b): half pass ✔**
 
-**(a)** Mechanism sahi hai, par examiner ko *justification* chahiye. Reframe:
-❌ "Main ek access ko 1.53 ns precision se measure kar raha hoon."
-✅ "Main ek access measure kar hi **nahi** raha — main **10 lakh accesses ka total**
-measure kar raha hoon, aur woh total itna bada hai ki timer ki coarseness usmein
-negligible ho jaati hai."
+**(a)** The mechanism is right, but the examiner wants a *justification*. Reframe:
+✗ "I measure one access to 1.53 ns precision."
+✓ "I am **not** measuring one access — I measure the **total of a million accesses**,
+and that total is large enough for the timer's coarseness to be negligible."
 
-*Analogy:* Ek kaagaz ki sheet mm-ruler se naapo — impossible. 1000 sheets ka stack
-= 52 mm → divide → 0.052 mm/sheet. Ruler improve nahi kiya; **signal-to-resolution
-ratio** improve kiya.
+*Analogy:* You cannot measure one sheet of paper with a millimetre ruler. Stack 1000
+sheets → 52 mm → divide → 0.052 mm per sheet. You did not improve the ruler; you
+improved the **signal-to-resolution ratio**.
 
 | | Value |
 |:---|:---|
 | Total time (2²⁰ × 1.53 ns) | 1,604,321 ns ≈ 38,500 ticks |
 | Timer uncertainty | ±1 tick = ±41.7 ns |
-| **Relative error on total** | **±0.0026%** |
+| **Relative error on the total** | **±0.0026%** |
 
-Key point: hop count ek **exact integer** hai — usse divide karne mein koi nayi
-uncertainty add nahi hoti.
+Key point: the hop count is an **exact integer**, so dividing by it introduces no new
+uncertainty.
 
-**(b)** Assumption **bilkul sahi** — per-hop cost stationary honi chahiye. Protection
-mechanisms **teen** hain, teen alag threats ke liye:
+**(b)** The assumption is **exactly right** — per-hop cost must be stationary. There
+are **three** protecting mechanisms, for three different threats:
 
-| Threat | Kahan | Protection |
+| Threat | Where | Protection |
 |:---|:---|:---|
-| Cold-start transient (cold misses, TLB fill) | window **ke andar** | **Warm-up traversal** (`wss_probe.c:356`) — timing se pehle poora set ek baar traverse, taaki window ke start aur end ki cost same ho. *Sabse direct protection.* |
-| Random interference (OS interrupt, background process) | ek window | **Min over 5 repeats** — interference sirf time *add* kar sakta hai, isliye minimum disturbed windows ko discard kar deta hai |
-| Thermal drift over ~3 min | **poore sweep** mein | **Shuffled size order** (`wss/__init__.py:93`) — ascending order mein bade sizes hamesha last (garam die) hote, aur woh badhotri size ke saath *correlated* hoti → fake upward slope cache boundary lagta. Shuffle se drift systematic bias ki jagah random noise ban jaata hai. |
+| Cold-start transient (cold misses, TLB fill) | **within** the window | **Warm-up traversal** (`wss_probe.c:356`) — one full traversal before timing, so the start and end of the window cost the same. *The most direct protection.* |
+| Random interference (OS interrupt, background process) | one window | **Minimum over 5 repeats** — interference can only *add* time, so the minimum discards disturbed windows |
+| Thermal drift over ~3 minutes | **across** the sweep | **Shuffled size order** (`wss/__init__.py:93`) — in ascending order the largest sizes are always measured last, on the hottest die, and that rise *correlates with size*, producing a fake upward slope that looks like a cache boundary. Shuffling converts systematic bias into random noise. |
 
----
+### Concept 1.4 — Fences (and a false premise in the brief)
 
-### Side-note V.1 — hwloc, CPUID leaf 4, Intel MLC kya hain? (viva opening ke liye)
+> ⚠️ The project brief asked: *"why did we need hardware fences (lfence/mfence) and
+> RDTSC?"* — **there is no `lfence`, `mfence` or `sfence` anywhere in the codebase.**
+> Not one. And *why there isn't* is the most elegant design point in the probe. (This
+> is Q1.5 in Part 3.)
 
-Ek line mein:
+**Novice.** A fence is a rule: *"finish everything on this side of the line before
+starting anything on the other side."* You need it when work **can** be done out of
+order. But consider: you open an envelope, and inside is **the address of the next
+envelope**. You cannot open envelope 2 first — its address is inside envelope 1.
+Ordering enforces **itself**; no rule is required.
 
-| Tool | Kya karta hai | Jawab kahan se |
+**Intermediate.** What the code has is a **compiler barrier** (`wss_probe.c:121`):
+`#define COMPILER_BARRIER() __asm__ __volatile__("" ::: "memory")` — empty assembly
+plus a memory clobber. It stops the **compiler** moving loads across the timer reads,
+and costs **zero cycles** at runtime (no instruction is emitted). Line 115 states the
+reasoning: *"a hardware fence is unnecessary because the pointer chase is already
+fully serialised by data dependencies."*
+
+**Expert — three distinctions:**
+
+| | Who reorders | When | Remedy |
+|:---|:---|:---|:---|
+| Compiler | build time | during compilation | `COMPILER_BARRIER()` |
+| CPU | run time | during execution | data dependency (already free) |
+
+1. **A compiler barrier is not a hardware fence.** Two different adversaries. The
+   chase handles the CPU; the compiler still needs handling.
+2. **`__rdtscp`, not `rdtsc`** (line 65). The extra `p` means "let prior instructions
+   retire, then read the counter". Plain `rdtsc` would need an `lfence` beside it —
+   **so the fence decision was made in the instruction selection.**
+3. **ARM does use `isb`, but it is not a memory fence** (line 77):
+   `asm volatile("isb; mrs %0, cntvct_el0" ...)`. `isb` is an **I**nstruction
+   **S**ynchronization **B**arrier, preventing the counter read being speculated
+   across the timed region. Different problem, different instrument.
+
+**Question 1.4** — Suppose you timed **independent random loads** instead of a
+pointer chain: `for (i...) sum += buf[idx[i]];` (addresses still random, prefetcher
+still defeated). (a) What now goes wrong that a fence would be needed to fix? (b)
+Would the measured latency rise or fall, and why? *(hint: MLP)*
+
+**Student's answer:** _not yet given — pending_
+
+**Verification:** _pending_
+
+### Side-note V.1 — What are hwloc, CPUID leaf 4, and Intel MLC? (for the opening)
+
+In one line each:
+
+| Tool | What it does | Where its answer comes from |
 |:---|:---|:---|
-| **hwloc / lstopo** | Machine ka topology map | OS se **poochta** hai |
-| **CPUID leaf 4** | CPU khud batata hai | Silicon mein **likhi table** |
-| **Intel MLC** | Latency/bandwidth **measure** | Measure karta hai, par shape **pehle se maan leta** hai |
+| **hwloc / lstopo** | Maps machine topology | **Asks** the OS |
+| **CPUID leaf 4** | CPU describes itself | A **table burned into silicon** |
+| **Intel MLC** | **Measures** latency/bandwidth | Measures — but **assumes the shape** |
 
-**hwloc / lstopo** [27] — open-source topology library; `lstopo` uska visualiser
-(Machine → Package → L3 → L2 → L1 → Core). **Kuch measure nahi karta, sirf padhta
-hai:** Linux `/sys/devices/system/cpu/cpu0/cache/`, macOS `sysctl`, Windows
-`GetLogicalProcessorInformationEx` — **yeh wahi teen interfaces hain jo
-`validation.py` ground truth ke liye use karta hai.** Farq: hwloc wahin rukta hai;
-hum usse apne measurement ko *check* karte hain.
+**hwloc / lstopo** [27] — an open-source topology library; `lstopo` is its visualiser
+(Machine → Package → L3 → L2 → L1 → Core). **It measures nothing; it reads:** Linux
+`/sys/devices/system/cpu/cpu0/cache/`, macOS `sysctl`, Windows
+`GetLogicalProcessorInformationEx` — **the same three interfaces `validation.py` uses
+for ground truth.** The difference: hwloc stops there; this project uses them to
+*check* a measurement.
 
-**CPUID leaf 4** [28] — x86 **instruction**. EAX mein leaf number daalo, `cpuid`
-execute karo, CPU registers mein jawab bharta hai (leaf 0 = vendor, leaf 1 =
-family/model, **leaf 4 = Deterministic Cache Parameters**). Subleaves 0,1,2,3… par
-loop karo; har subleaf ek level deta hai: type, level, line size, associativity
-(ways), sets. `capacity = ways × partitions × line_size × sets`.
-**Do limitations:** (i) yeh measurement nahi, **manufacturer ki burned-in table**
-hai; (ii) **x86-only** — ARM par `cpuid` exist hi nahi karta. ARM ke `CLIDR_EL1` /
-`CCSIDR_EL1` **EL1 (kernel)** level par hain, user space se padhe nahi ja sakte,
-aur Apple Silicon par expose hi nahi hote. **Isliye "bas CPUID use kar lo" wala
-objection Apple Silicon par kaam hi nahi karta.**
+**CPUID leaf 4** [28] — an x86 **instruction**. Put a leaf number in EAX, execute
+`cpuid`, and the CPU fills registers (leaf 0 = vendor, leaf 1 = family/model, **leaf
+4 = Deterministic Cache Parameters**). Iterate subleaves 0,1,2,3…; each returns one
+level: type, level, line size, associativity (ways), sets.
+`capacity = ways × partitions × line_size × sets`. **Two limitations:** (i) it is not
+a measurement but the **manufacturer's burned-in table**; (ii) it is **x86-only** —
+`cpuid` does not exist on ARM. ARM's `CLIDR_EL1` / `CCSIDR_EL1` are **EL1
+(kernel)** registers, unreadable from user space and not exposed on Apple Silicon.
+**So the "just use CPUID" objection fails outright on Apple Silicon.**
 
-**Intel MLC** [29] — Intel ka free tool jo **sach mein measure** karta hai. Phir bhi
-competitor nahi: (i) **Intel-only**; (ii) **hierarchy ka shape pehle se maan leta
-hai** — tum use bolte ho "L2 ki latency naapo", jiske liye pehle se pata hona
-chahiye ki L2 hai aur kitna bada. Woh **parameters** measure karta hai; hum **shape
-discover** karte hain.
+**Intel MLC** [29] — Intel's free tool, which genuinely **does measure**. Still not a
+competitor: (i) **Intel-only**; (ii) it **assumes the hierarchy's shape** — you tell
+it to measure L2 latency, which requires already knowing L2 exists and how large it
+is. It measures **parameters**; this project discovers the **shape**.
 
-**Chain of trust (poore argument ka core):**
+**Chain of trust — the core of the argument:**
 
 ```
 hwloc/lstopo → OS interface → firmware(ACPI)/CPUID → manufacturer's table
 CPUID leaf 4 ──────────────────────────────────────→ manufacturer's table
-Intel MLC    → measures ✓ ... but shape given + Intel-only
-Auto-Echo    → measures ✓ ... discovers shape ✓ ... koi table nahi chahiye
+Intel MLC    → measures ✓ ... but shape assumed + Intel-only
+Auto-Echo    → measures ✓ ... discovers shape ✓ ... needs no table
 ```
 
-Har existing tool ki chain aakhir mein ek aisi table par khatam hoti hai jo kisi ne
-pehle likhi hai — bas yahi opening line ka matlab hai.
+Every existing tool's chain terminates at a table somebody wrote. That is precisely
+what the opening line means.
 
-**💎 Killer example (apne hi data se).** M1 mein ~8 MiB **System Level Cache** hai
-jise **koi OS interface report nahi karta** — `sysctl` chup, hwloc chup, aur ARM par
-CPUID hai hi nahi. Woh cache exist karta hai (reverse-engineered, ref [13]) aur
-§5.2 ke latency curve mein L2 ke saath merged mid-band ke roop mein **dikhta** hai.
-Isiliye §4.3 ke "expected levels" rule mein SLC count nahi hota — kyunki woh
-OS-reported nahi hai.
+**Killer example, from your own data.** The M1 has a ~8 MiB **System Level Cache**
+that **no OS interface reports** — `sysctl` silent, hwloc silent, no CPUID on ARM. It
+exists (reverse-engineered, [13]) and **appears** in §5.2's latency curve as a merged
+mid-band with L2. This is why §4.3's "expected levels" rule excludes the SLC — it is
+not OS-reported.
 
-**⚠️ Trap:** In tools ko "kharab" mat kehna — woh apni supported machines par
-Auto-Echo se **zyada accurate** hain. Sahi framing: *"Each is more accurate than my
-tool on the hardware it supports — that's precisely the point. I'm asking what
-remains recoverable when none of them applies."*
+**Trap:** never call these tools "bad" — they are *more accurate* than Auto-Echo on
+their supported machines. Correct framing: *"Each is more accurate than my tool on
+the hardware it supports — that's precisely the point. I'm asking what remains
+recoverable when none of them applies."*
 
----
+### Side-note V.2 — Live proof on your own machine (`sysctl` output)
 
-### Side-note V.2 — LIVE PROOF apni hi machine par (`sysctl` output)
+The student tried `lstopo` → `command not found` (hwloc is not installed by default
+on macOS; `brew install hwloc`). But no install is needed — what hwloc *reads* on
+macOS can be seen directly, and it proves the dissertation's core argument live.
 
-Student ne `lstopo` chalane ki koshish ki → `command not found` (hwloc macOS par
-default nahi; `brew install hwloc`). Lekin install ki zaroorat nahi — hwloc macOS
-par **jo padhta hai** woh seedha dekha ja sakta hai, aur usse dissertation ka core
-argument live prove ho jaata hai.
-
-**Actual output (Apple M1, is machine par):**
+**Actual output (Apple M1, this machine):**
 
 ```
 hw.perflevel0.l1dcachesize: 131072      # 128 KiB — P-core
@@ -398,43 +897,58 @@ hw.perflevel0.l1icachesize: 196608      # 192 KiB
 hw.perflevel0.l2cachesize:  12582912    # 12 MiB
 hw.perflevel1.l1dcachesize: 65536       # 64 KiB — E-core
 hw.perflevel1.l2cachesize:  4194304     # 4 MiB
-hw.cacheconfig: 8 1 4 0 ...             # 8 cores, 1/L1, 4 share L2
+hw.cacheconfig: 8 1 4 0 ...             # 8 cores, 1 per L1, 4 share L2
 hw.cachelinesize: 128
-hw.l1dcachesize: 65536                  # ⚠️ generic = E-CORE value
-hw.l2cachesize:  4194304                # ⚠️ generic = E-CORE value
+hw.l1dcachesize: 65536                  # ⚠ generic = E-CORE value
+hw.l2cachesize:  4194304                # ⚠ generic = E-CORE value
 
-SLC / "system level cache" grep  →  KUCH NAHI. Ek bhi entry nahi.
+grep for SLC / "system level cache"  →  NOTHING. Not one entry.
 ```
 
-**Finding 1 — SLC literally invisible.** M1 ka ~8 MiB System Level Cache silicon
-par maujood hai (reverse-engineered, ref [13]) aur macOS uske baare mein **ek shabd
-nahi** bolta. Chain of trust: `hwloc → sysctl → yeh output`. Toh **hwloc bhi SLC
-nahi dikha sakta** — source mein hai hi nahi. Aur probe usse latency curve mein
-dekh leta hai (§5.2, L2 ke saath merged mid-band).
+**Finding 1 — the SLC is literally invisible.** The M1's ~8 MiB System Level Cache
+exists in silicon (reverse-engineered, [13]) and macOS says **nothing** about it.
+Chain of trust: `hwloc → sysctl → this output`. So **hwloc cannot show it either** —
+it isn't in the source. Yet the probe sees its effect in the latency curve (§5.2).
 *Viva line:* "I can demonstrate this on my own machine. The M1 has an 8 MiB SLC.
-`sysctl` reports nothing about it, so `hwloc` cannot either. My probe sees its
-effect in the latency curve. That is the gap this project addresses."
+`sysctl` reports nothing about it, so `hwloc` cannot either. My probe sees its effect
+in the latency curve. That is the gap this project addresses."
 
-**Finding 2 — heterogeneous-die trap, jise code ne pakda ✅.** Generic
-`hw.l1dcachesize` = 65536 (**E-core**), jabki probe **P-core** par chalta hai
-(131072). Generic key use karte toh detected 157.5 KiB ko 64 KiB ke against score
-karte → **+146% error** instead of +23%, aur poora M1 validation galat hota.
-`validation.py` explicitly `hw.perflevel0.*` padhta hai — sahi decision.
+**Finding 2 — a heterogeneous-die trap the code avoids ✔.** The generic
+`hw.l1dcachesize` returns 65536 (**E-core**) while the probe runs on a **P-core**
+(131072). Using the generic key would score the detected 157.5 KiB against 64 KiB →
+**+146% error** instead of +23%, invalidating the whole M1 validation.
+`validation.py` explicitly reads `hw.perflevel0.*` — the correct decision.
 *Viva line:* "On a heterogeneous die the generic `sysctl` keys report the efficiency
 cluster. Since the probe runs on a performance core, using them would have scored a
 P-core measurement against E-core ground truth."
-**📌 ACTION:** Dissertation mein yeh likha nahi hai. §5.3 mein Windows per-core
-oracle fix ka poora paragraph hai, par macOS ne bhi wahi problem solve ki aur woh
-mention nahi hai — do sentences add karne layak, free credit.
 
-**Finding 3 — `hw.cacheconfig: 8 1 4`** = 8 cores, **1 core per L1 (private)**,
-**4 cores share L2 (cluster-wide)**. Yeh §5.3.2 ke contention argument ka aadhaar
-confirm karta hai: shared caches contend karte hain, private nahi. (Pehla
-`hw.cachesize` value 3.4 GB cache nahi, **memory** hai.)
+**Finding 3 — `hw.cacheconfig: 8 1 4`** = 8 cores, **1 core per L1 (private)**, **4
+cores share L2 (cluster-wide)**. This confirms the basis of §5.3.2's contention
+argument: shared caches contend, private ones do not. (The first `hw.cachesize` value
+of 3.4 GB is memory, not a cache.)
+
+**Confirmed later by `lstopo` itself:**
+
+```
+Machine (8192MB total)
+  Package L#0
+    NUMANode L#0 (P#0 8192MB)
+    L2 L#0 (4096KB)                        ← E-cluster
+      L1d L#0-3 (64KB)  + Core L#0-3       ← CPUs 0–3 are EFFICIENCY cores
+    L2 L#1 (12MB)                          ← P-cluster
+      L1d L#4-7 (128KB) + Core L#4-7       ← CPUs 4–7 are PERFORMANCE cores
+```
+
+Every documented figure matches (L1d 128 KiB, L2 12 MiB, line 128 B, **no L3**). And
+critically: **CPUs 0–3 are E-cores on this machine.** Had the probe naively pinned to
+CPU 0 on macOS it would have measured the E-core. It uses a QoS hint instead, and the
+recovered errors (+23.0% / +16.1% against P-core figures, versus +146% / +248%
+against E-core figures) prove empirically that the bias worked. This evidence is now
+recorded in the dissertation (§3.1 and Table 5).
 
 ---
 
-# Part 2 — Question Bank
+# Part 3 — Question Bank
 
 ## Module 1 — The C Probe (Pointer-Chasing)
 
