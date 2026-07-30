@@ -80,6 +80,168 @@ data, not a hypothetical.
 
 ---
 
+## Clarifications for Section `0:00`
+
+Every term in the opening must be defensible on a follow-up. These are the seven
+things most likely to be probed.
+
+### Glossary — full forms
+
+| Term | Full form | What it is |
+|:---|:---|:---|
+| **hwloc** | **h**ard**w**are **loc**ality | Library that maps machine topology |
+| **lstopo** | **l**i**s**t **topo**logy | hwloc's visualiser (`ls` + topology) |
+| **sysctl** | **sys**tem **c**on**t**ro**l** | Unix interface for reading/writing kernel parameters |
+| **ARM** | **A**dvanced **R**ISC **M**achines | CPU architecture family (originally *Acorn RISC Machine*). RISC = **R**educed **I**nstruction **S**et **C**omputer |
+| **CPUID** | **CPU ID**entification | x86 instruction that asks the CPU about itself |
+| **MLC** | **M**emory **L**atency **C**hecker | Intel's measurement tool |
+| **TLB** | **T**ranslation **L**ookaside **B**uffer | Cache of virtual→physical address translations |
+| **SLC** | **S**ystem **L**evel **C**ache | Apple's undocumented shared cache |
+| **DRAM** | **D**ynamic **R**andom **A**ccess **M**emory | Main memory |
+| **rdtscp** | **R**ea**D T**ime **S**tamp **C**ounter and **P**rocessor ID | x86 timing instruction |
+| **WSS** | **W**orking **S**et **S**ize | How much data a program touches at once |
+| **MLP** | **M**emory **L**evel **P**arallelism | How many memory accesses can be in flight at once |
+| **ISA** | **I**nstruction **S**et **A**rchitecture | A CPU's instruction vocabulary (x86-64, ARM64) |
+| **MSR** | **M**odel **S**pecific **R**egister | Privileged CPU control register |
+| **GIL** | **G**lobal **I**nterpreter **L**ock | CPython's single-thread lock |
+| **PELT** | **P**runed **E**xact **L**inear **T**ime | Change-point detection algorithm |
+
+### What "an architecture-specific instruction, like x86's CPUID leaf 4" means
+
+**Architecture.** Each CPU family has its own **instruction vocabulary**. x86-64
+(Intel/AMD) and ARM64 (Apple/Qualcomm) are two different languages; an instruction
+from one does not run on the other.
+
+**Architecture-specific.** `CPUID` is an **x86 instruction**. It does not exist in
+ARM's vocabulary at all — executing it on ARM raises an illegal-instruction fault.
+
+**Leaf.** `CPUID` works like a numbered form: put a number in the `EAX` register, run
+`cpuid`, and the CPU fills in the answer registers.
+
+| Leaf | Question | Answer |
+|:---:|:---|:---|
+| 0 | "Who made you?" | `GenuineIntel` |
+| 1 | "Which model?" | family, model, stepping |
+| **4** | **"Describe your caches"** | **level, type, line size, ways, sets** |
+
+Leaf 4's official name is **Deterministic Cache Parameters**, and capacity follows as
+`ways × partitions × line_size × sets`.
+
+**Why it matters here:** this is not a measurement — it is the manufacturer's table
+burned into silicon, which the CPU reads back. And because it is x86-only, the
+objection *"just use CPUID"* fails outright on Apple Silicon.
+
+### "Who actually needs this?" — in plain terms
+
+*Analogy.* You are a travelling chef. Every kitchen has a different counter size, and
+you need to know how much you can chop at once — too much and it spills, too little
+and you waste time. You could ask the kitchen manager (hwloc) — but what if there is
+no manager, or their notes are out of date? Then you measure by trying.
+
+**Four real use cases:**
+
+1. **Cache-blocked kernels (e.g. matrix multiplication).** Large matrix multiplies are
+   split into **tiles** that must fit in cache. Tile too large → thrashing; too small
+   → wasted cache. Choosing the tile size requires knowing the cache size — and code
+   that ships to unknown machines must *discover* it.
+2. **Database join buffers.** A join builds a hash table. If it fits in L2 the join is
+   fast; if it spills to DRAM it can be ~100× slower. The database wants to size the
+   buffer to the cache.
+3. **Auto-tuners such as ATLAS** (**A**utomatically **T**uned **L**inear **A**lgebra
+   **S**oftware), which runs experiments *at install time* on your machine to find the
+   best parameters. Same philosophy: measure, don't assume.
+4. **Research on undocumented hardware** — new chips, custom silicon, parts whose
+   specifications were never published.
+
+### "If hwloc is more accurate, why would anyone trust your tool?" ⭐
+
+**The honest answer: for the job hwloc does, they shouldn't.** The two answer
+different questions.
+
+*Analogy.* A car's spec sheet says the fuel tank holds 50 litres. That is accurate —
+more accurate than any measurement you could take. But if the question is *"how far
+can I drive right now?"*, the spec sheet is useless; you need the fuel gauge and trip
+computer, which measure the current situation.
+
+| | What it tells you |
+|:---|:---|
+| **Spec sheet** (= hwloc) | How big the tank **is** — static, accurate, unchanging |
+| **Trip computer** (= Auto-Echo) | How far you can **actually go** — dynamic, situational |
+
+Concretely, from this project's own data:
+
+| | hwloc says | Auto-Echo says |
+|:---|:---|:---|
+| Intel L3 | **20 MiB**, always | **19.7 MiB** quiet; **3.5 MiB** under load |
+| On 4 KiB pages | **20 MiB**, always | unreachable — curve saturates first (§5.3) |
+| M1 SLC | nothing | an 18 MiB-wide ramp in the curve |
+
+**And the key point: hwloc's accuracy is *inherited*, not *earned*.** It is accurate
+because the table is accurate. When the table is **missing** (the M1 SLC), or **true
+but irrelevant** (a 20 MiB L3 you cannot reach), that accuracy does not help.
+
+*Viva line:* **"hwloc is more accurate about the chip. My tool is more accurate about
+the program."**
+
+### "What if the OS is lying, or you're in a VM?" — in detail
+
+**When this happens:**
+
+1. **Cloud VMs.** The hypervisor may show the guest the host's full L3. hwloc reports
+   "32 MiB L3" while you share it with seven other tenants and effectively have far
+   less.
+2. **Containers.** cgroups limit CPU, but `/sys` still exposes the *host's* caches —
+   you may hold 0.5 of a CPU while hwloc describes the whole machine.
+3. **Hypervisor CPUID masking.** Some hypervisors filter or synthesise CPUID leaves
+   (to permit live migration), so cache information arrives wrong or absent.
+4. **Firmware bugs.** ACPI tables with incorrect values — this genuinely occurs,
+   particularly on new boards.
+
+**Why it matters.** hwloc reports that source faithfully and **has no way to check
+it** — it is a faithful reporter of a possibly-wrong source. A measurement-based tool
+**fails visibly**: if the OS claims 32 MiB but the curve's knee is at 4 MiB, you have
+a **contradiction you can see**, and you have learned something. hwloc alone gives
+false confidence.
+
+⚠️ **Honest caveat — say this.** *"That does not mean my tool is right in such a case.
+It means the disagreement becomes detectable. And I should add that my own validation
+scores against OS ground truth — so if the OS is lying, my accuracy metric is wrong
+too. Two independent readings disagreeing tells me something is wrong; it does not
+tell me which one is right."* This avoids an over-claim and shows you know the limits.
+
+### "When does a table genuinely not exist?" — in plain terms
+
+The Apple M1 has a cache called the **System Level Cache** — roughly **8 MB**, shared
+between CPU and GPU. **Apple never documented it.**
+
+| Source | What it says about the SLC |
+|:---|:---|
+| `sysctl` | nothing — not one entry |
+| `lstopo` (hwloc) | nothing — there is nothing to read |
+| `CPUID` | the instruction doesn't exist on ARM |
+| **Your latency curve** | **an 18 MiB-wide ramp from ~12 to ~30 MiB** |
+
+The cache **exists** — it was found by reverse engineering ([13]). Nobody wrote it
+down.
+
+So "the table doesn't exist" does not mean *"documentation is incomplete by
+accident"*. It means **that entry was never written**. The same applies to new chips
+before OS support lands, custom or embedded silicon, and pre-release parts under NDA.
+
+**30-second live demo:**
+
+```
+$ lstopo
+    L2 L#1 (12MB)
+      L1d L#4-7 (128KB) + Core L#4-7
+    NUMANode (8192MB)          ← straight from L2 to memory
+```
+
+*"There is an 8 megabyte cache between that L2 and memory. It isn't here. It is in my
+curve."*
+
+---
+
 ## `2:00` — Why it's hard
 
 > "Three things make this hard.
