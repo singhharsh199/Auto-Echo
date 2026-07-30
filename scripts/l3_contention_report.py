@@ -20,6 +20,7 @@ Usage::
         "quiesced=data/intel_l3_quiesced128/wss_curves_all.csv" \
         "loaded=data/intel_l3_loaded/wss_curves_all.csv"
 """
+
 import argparse
 
 import numpy as np
@@ -49,21 +50,25 @@ def _per_sweep(all_csv: str):
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("conditions", nargs="+", help="label=wss_curves_all.csv pairs")
     args = ap.parse_args()
 
-    print(f"L3-contention comparison (per-sweep, PELT penalty={PENALTY}, 4-level split)\n")
-    print(f"{'condition':<14}{'L3 knee MiB (med [min-max])':<30}"
-          f"{'L3 lat ns':<12}{'DRAM lat ns':<12}{'levels':<8}")
+    print(
+        f"L3-contention comparison (per-sweep, PELT penalty={PENALTY}, 4-level split)\n"
+    )
+    print(
+        f"{'condition':<14}{'L3 knee MiB (med [min-max])':<30}"
+        f"{'L3 lat ns':<12}{'DRAM lat ns':<12}{'levels':<8}"
+    )
     print("-" * 76)
     for spec in args.conditions:
         label, path = spec.split("=", 1)
         l3_mib, l3_med, dram_med, nlev = _per_sweep(path)
         if l3_mib:
-            knee = (f"{np.median(l3_mib):.1f} "
-                    f"[{min(l3_mib):.1f}-{max(l3_mib):.1f}]")
+            knee = f"{np.median(l3_mib):.1f} " f"[{min(l3_mib):.1f}-{max(l3_mib):.1f}]"
         else:
             knee = "n/a"
         l3l = f"{np.median(l3_med):.1f}" if l3_med else "n/a"

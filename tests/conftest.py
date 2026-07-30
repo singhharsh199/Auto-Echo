@@ -4,13 +4,15 @@ Tests here exercise the pure-Python analysis/validation/evaluation logic on
 *synthetic* latency curves, so they run without a compiled C extension and
 without any particular hardware.
 """
+
 import numpy as np
 import pandas as pd
 import pytest
 
 
-def _synthetic_curve(steps, points_per_octave=10, max_bytes=256 * 1024 * 1024,
-                     line=64, noise=0.0, seed=0):
+def _synthetic_curve(
+    steps, points_per_octave=10, max_bytes=256 * 1024 * 1024, line=64, noise=0.0, seed=0
+):
     """Build a clean staircase latency curve.
 
     :param steps: list of (capacity_bytes, latency_ns) plateaus, ascending. A
@@ -28,7 +30,7 @@ def _synthetic_curve(steps, points_per_octave=10, max_bytes=256 * 1024 * 1024,
     lats = [latency for _, latency in steps]
 
     def latency_for(wss):
-        for cap, lat in zip(caps, lats):
+        for cap, lat in zip(caps, lats, strict=True):
             if wss <= cap:
                 return lat
         return lats[-1]
@@ -36,21 +38,25 @@ def _synthetic_curve(steps, points_per_octave=10, max_bytes=256 * 1024 * 1024,
     latency = np.array([latency_for(s) for s in sizes], dtype=float)
     if noise:
         latency = latency * (1.0 + rng.normal(0, noise, size=latency.shape))
-    return pd.DataFrame({
-        "wss_bytes": sizes,
-        "wss_kib": sizes / 1024.0,
-        "latency_ns": latency,
-    })
+    return pd.DataFrame(
+        {
+            "wss_bytes": sizes,
+            "wss_kib": sizes / 1024.0,
+            "latency_ns": latency,
+        }
+    )
 
 
 @pytest.fixture
 def three_level_curve():
     """L1 32 KiB @1.5 ns, L2 256 KiB @5 ns, then DRAM @90 ns."""
-    return _synthetic_curve([
-        (32 * 1024, 1.5),
-        (256 * 1024, 5.0),
-        (8 * 1024 * 1024, 14.0),
-    ])
+    return _synthetic_curve(
+        [
+            (32 * 1024, 1.5),
+            (256 * 1024, 5.0),
+            (8 * 1024 * 1024, 14.0),
+        ]
+    )
 
 
 @pytest.fixture

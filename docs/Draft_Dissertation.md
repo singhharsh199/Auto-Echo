@@ -639,13 +639,13 @@ count and no random state to report, and repeated runs on the same curve are
 bit-identical by construction rather than by convention.
 
 This replaced an earlier Lloyd-based implementation, and the migration was
-audited rather than assumed. The script `verify_kmeans_optimality.py` computes,
+audited rather than assumed. The script `scripts/verify_kmeans_optimality.py` computes,
 for every `k` in the search range and for both measured curves, the globally
 optimal partition and compares it against what Lloyd's heuristic reached
 (Table 1):
 
 **Table 1: Solver audit — Lloyd's heuristic against the exact dynamic
-program, per `k`, on both measured curves (`verify_kmeans_optimality.py`).**
+program, per `k`, on both measured curves (`scripts/verify_kmeans_optimality.py`).**
 
 | Machine | Lloyd optimal | Lloyd sub-optimal (excess cost) | Selected $k$: Lloyd | Selected $k$: exact |
 | :--- | :---: | :---: | :---: | :---: |
@@ -780,7 +780,7 @@ what the automatic claim means.
 
 **A disclosure about the analysis scripts, not the pipeline.** The claim above is
 about the productive path, and two auxiliary scripts previously departed from it in a
-way that the earlier draft did not record. `capacity_ci.py` (the ten-sweep capacity
+way that the earlier draft did not record. `scripts/capacity_ci.py` (the ten-sweep capacity
 spread of Table 9) and `compare_curves.py --annotate` (the boundary markers in
 Figs. 9, 10 and 12) both localised boundaries with a **fixed PELT penalty of 3.0** —
 precisely the hand-set constant §6 claims to have eliminated. Reporting a headline
@@ -1135,7 +1135,7 @@ aggregate minimum-over-sweeps curve.**
 | L3 Cache | 19.7 MiB | 20.81 ns | 14.53–25.70 ns | 20 MiB (shared) | −1.5 % (0.02 oct) — **matches** |
 | DRAM | — | 122.36 ns | 62.66–128.36 ns | — | page-walk cost lifted by huge pages |
 
-*Capacity spread over the ten sweeps (`capacity_ci.py`):* each level's detected
+*Capacity spread over the ten sweeps (`scripts/capacity_ci.py`):* each level's detected
 capacity as median [min–max] — **L1 55.7 KiB [55.7–55.7], L2 1.2 MiB [1.2–1.2],
 L3 19.7 MiB [13.9–19.7]**. The private L1 and L2 boundaries are *perfectly*
 repeatable (zero spread across all ten sweeps); only the **shared** L3 varies, and
@@ -1269,8 +1269,8 @@ against its own timing library to link under a 2025 toolchain (gcc 15); no
 measurement code was altered, and its build dialect (`-O -std=gnu89`) is lmbench's
 own. It was run as `lat_mem_rd -N 5 -t 512 128` (512 MiB maximum working set,
 128-byte stride, minimum of five repetitions per size), its 131-point curve
-converted to Auto-Echo's format by `crosscheck_lmbench.py` and overlaid with
-`compare_curves.py` (Fig. 9). For each of the four plateaus Auto-Echo discovered,
+converted to Auto-Echo's format by `scripts/crosscheck_lmbench.py` and overlaid with
+`scripts/compare_curves.py` (Fig. 9). For each of the four plateaus Auto-Echo discovered,
 Table 13 reports Auto-Echo's median latency, lmbench's median over the *same*
 working-set range, and their ratio. The Auto-Echo curve here is the three-sweep run
 of `data/intel_i5_13450hx/`, retained because `lmbench` was swept against it; its
@@ -1311,7 +1311,7 @@ point-wise ratio refutes it. Interpolating Auto-Echo onto lmbench's grid in log-
 and taking the ratio at every lmbench sample gives, per band:
 
 **Table 14: Point-wise lmbench/Auto-Echo latency ratio within each band — what
-Table 13's medians conceal (`crosscheck_plateaus.py`).**
+Table 13's medians conceal (`scripts/crosscheck_plateaus.py`).**
 
 | Band | min | median | max | n |
 | :--- | :---: | :---: | :---: | :---: |
@@ -1384,7 +1384,7 @@ penalty-free `Dynp` to *localise* them, and the same one-octave Hungarian valida
 against the same per-core ground truth. Nothing is seeded from the Auto-Echo result,
 so the outcome is evidence about the inference stage rather than a restatement of the
 latency comparison. It is reproducible as the third section of
-`crosscheck_plateaus.py`.
+`scripts/crosscheck_plateaus.py`.
 
 **Table 15: Inference transfer — Auto-Echo's unsupervised pipeline applied to
 lmbench's curve, validated against the same per-core ground truth.**
@@ -1450,7 +1450,7 @@ quiescent measurement is 30 % low" — after §5.3's correction it is not — bu
 weaker and more interesting one: that *whatever* the probe recovers is bounded by
 the share of the L3 actually available to it.
 
-**The contending load** is eight worker processes (`l3_load.py`), each continuously
+**The contending load** is eight worker processes (`scripts/l3_load.py`), each continuously
 streaming (read-modify-write) a 32 MiB buffer — comfortably larger than the 20 MiB
 L3 — pinned to logical CPUs 2–9 with CPU 0 (the probe's core) left free. Eight such
 streams keep the shared L3 saturated with worker data; being memory-bandwidth-bound
@@ -1662,7 +1662,7 @@ the change-point penalty sensitivity of Tables 5 and 9, because unlike the penal
 it is not varied anywhere else in the evaluation. Table 18 varies it directly.
 
 **Table 18: Sampling-density robustness — the selected level count against sweep
-resolution (`sampling_density_sweep.py`).** **Both** machines' rows are now *fresh
+resolution (`scripts/sampling_density_sweep.py`).** **Both** machines' rows are now *fresh
 measurements*: the probe was re-run end to end at each density, so every row is an
 independent sweep rather than a re-analysis. (This is why the M1 row at ten points
 per octave reports a Silhouette of 0.898 where §3.2.1 reports 0.894 for the same
@@ -1703,7 +1703,7 @@ density range is evidence, not proof, and a hierarchy with levels closer togethe
 than either of these could still be resolution-sensitive.
 
 With two real curves now in hand, a combined cross-machine overlay
-(`compare_curves.py`) plots the M1's 128 KiB / 12 MiB knees against the Intel
+(`scripts/compare_curves.py`) plots the M1's 128 KiB / 12 MiB knees against the Intel
 core's 48 KiB / 1.25 MiB / L3 knees on one log–log axis (Fig. 12, drawn from the
 ten-sweep 2 MiB huge-page Intel run). Both are flat in L1; the M1 then carries a
 single high **L2+SLC** shelf (~9 ns) where the Intel shows a distinct
@@ -1889,7 +1889,7 @@ Following the structure of the reference paper's own threats section [1]:
   (§3.2.1). This is structural rather than merely audited: there is no local
   optimum left for the count to be an artefact of. The migration from the earlier
   Lloyd-based implementation changed no reported result, as documented by
-  `verify_kmeans_optimality.py`.
+  `scripts/verify_kmeans_optimality.py`.
 - **Validation metric — precision as well as recall.** Detected knees are
   assigned to documented caches by *optimal* one-to-one (Hungarian) matching
   rather than greedy nearest-first (which can undercount when adjacent caches
@@ -2023,13 +2023,13 @@ memory" user right (no kernel module or driver). Remaining directions:
   geometry on the same die). (The per-core Windows ground-truth query via
   `GetLogicalProcessorInformationEx` is now
   implemented, so the automatic accuracy metric is valid on Windows — §5.3, §5.5.)
-- **Cross-machine comparison figure.** A helper (`compare_curves.py`) overlays
+- **Cross-machine comparison figure.** A helper (`scripts/compare_curves.py`) overlays
   the per-machine latency curves (`wss_curve.csv`) on a single log–log axis with
   each machine's detected cache boundaries annotated. Comparing the M1's
   128 KiB / 12 MiB knees against an x86 machine's distinct L1/L2/L3 knees on one
   plot provides direct visual evidence for the architecture-agnostic claim.
 - **External cross-check against lmbench (delivered), and the control it still
-  needs.** The converter (`crosscheck_lmbench.py`) that turns `lat_mem_rd` output [9]
+  needs.** The converter (`scripts/crosscheck_lmbench.py`) that turns `lat_mem_rd` output [9]
   into the same curve format has been exercised end to end: lmbench was built and
   swept on the Intel machine and overlaid on Auto-Echo's curve (§5.3.1, Tables 13–15,
   Fig. 9). The two independent tools recover the same four-tier staircase with an
@@ -2097,7 +2097,7 @@ memory" user right (no kernel module or driver). Remaining directions:
   estimator in the ensemble still fitted heuristically.
 - **Statistical confidence (delivered for capacities).** A ten-sweep huge-page run
   now reports each detected capacity as a median with min–max spread
-  (`capacity_ci.py`; Table 9 footnote): the private L1/L2 boundaries are invariant
+  (`scripts/capacity_ci.py`; Table 9 footnote): the private L1/L2 boundaries are invariant
   (zero spread across ten sweeps) and only the shared L3 varies (13.9–19.7 MiB),
   corroborating the contention finding of §5.3.2. Ten sweeps is too few for a
   parametric interval, so a non-parametric spread is reported rather than a standard
@@ -2255,7 +2255,7 @@ investigate, and
 the decision to accept or reject each suggestion are the author's.
 
 **Analysis and verification.** AI assistance was used to write verification code
-that checks claims made in the text, notably `verify_kmeans_optimality.py`
+that checks claims made in the text, notably `scripts/verify_kmeans_optimality.py`
 (§3.2.1) and the sampling-density audit (§5.4). These scripts compute results from
 measured data; they do not generate data.
 

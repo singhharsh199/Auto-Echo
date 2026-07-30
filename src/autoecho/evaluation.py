@@ -8,6 +8,7 @@ estimator is scored on:
 and, for change-point detection, the mean percentage error of the localised
 cache capacities against hardware ground truth.
 """
+
 from collections import Counter
 
 import numpy as np
@@ -23,7 +24,14 @@ from autoecho.analysis import (
 from autoecho.validation import validate
 
 
-def _counts_for_sweep(curve: pd.DataFrame, penalty: float = None) -> dict:
+def _counts_for_sweep(curve: pd.DataFrame, penalty: float | None = None) -> dict:
+    """Level count from each independent estimator for one sweep.
+
+    :param curve: one sweep's ``wss_bytes``/``latency_ns`` curve.
+    :param penalty: accepted for signature compatibility only; the
+        change-point counter uses the penalty-free cost-knee criterion.
+    :returns: estimator name -> detected level count.
+    """
     # ``penalty`` is retained for signature compatibility but the change-point
     # entry uses the INDEPENDENT cost-knee counter, not the productive hybrid
     # (whose count is, by construction, the Silhouette count) -- otherwise the
@@ -96,10 +104,14 @@ def compare_methods(
     # Rank: correct count first, then most stable (high agreement, low std), then
     # closest to expected.
     df["_dist"] = (df["modal_levels"] - expected).abs()
-    df = df.sort_values(
-        by=["count_ok", "modal_agreement", "std_levels", "_dist"],
-        ascending=[False, False, True, True],
-    ).drop(columns="_dist").reset_index(drop=True)
+    df = (
+        df.sort_values(
+            by=["count_ok", "modal_agreement", "std_levels", "_dist"],
+            ascending=[False, False, True, True],
+        )
+        .drop(columns="_dist")
+        .reset_index(drop=True)
+    )
     df.insert(0, "rank", df.index + 1)
     return df
 
@@ -116,8 +128,8 @@ def evaluate_lof_mitigation(penalty: float = 3.0) -> dict:
     """
     import numpy as np
 
-    from autoecho.probe import collect
     from autoecho.preprocessing import remove_outliers_lof
+    from autoecho.probe import collect
     from autoecho.wss import get_timer_resolution_ns
 
     raw = collect(50000, 0)
@@ -129,8 +141,12 @@ def evaluate_lof_mitigation(penalty: float = 3.0) -> dict:
     vals = cleaned["latency_ns"].values
     # Fraction of cleaned samples lying within 10% of an integer tick multiple.
     nearest_mult = np.round(vals / tick) if tick > 0 else vals
-    on_grid = np.mean(np.abs(vals - nearest_mult * tick) < 0.1 * tick) if tick > 0 else 0.0
-    n_distinct = int(len(np.unique(np.round(vals / tick)))) if tick > 0 else len(np.unique(vals))
+    on_grid = (
+        np.mean(np.abs(vals - nearest_mult * tick) < 0.1 * tick) if tick > 0 else 0.0
+    )
+    n_distinct = (
+        int(len(np.unique(np.round(vals / tick)))) if tick > 0 else len(np.unique(vals))
+    )
 
     return {
         "n_raw": n_raw,
@@ -141,8 +157,9 @@ def evaluate_lof_mitigation(penalty: float = 3.0) -> dict:
     }
 
 
-def capacity_accuracy(sweeps: list, ground_truth: dict, penalty: float = None,
-                      capacity_method: str = "edge") -> dict:
+def capacity_accuracy(
+    sweeps: list, ground_truth: dict, penalty: float = None, capacity_method: str = "edge"
+) -> dict:
     """Mean absolute percentage error of change-point cache capacities vs ground
     truth, averaged over sweeps (change-point is the only estimator that
     localises capacities, not just counts).
@@ -153,8 +170,9 @@ def capacity_accuracy(sweeps: list, ground_truth: dict, penalty: float = None,
     errs = []
     accs = []
     for curve in sweeps:
-        levels = detect_levels_changepoint(curve, penalty=penalty,
-                                           capacity_method=capacity_method)
+        levels = detect_levels_changepoint(
+            curve, penalty=penalty, capacity_method=capacity_method
+        )
         caps = levels["capacity_bytes"].dropna().tolist()
         # Reuse the caller's ground-truth reading instead of re-querying the OS.
         v = validate(caps, ground_truth=ground_truth)

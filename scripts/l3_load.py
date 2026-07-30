@@ -25,6 +25,7 @@ writing every byte each pass. CPU pinning uses ``SetProcessAffinityMask``
 (kernel32) on Windows and ``os.sched_setaffinity`` elsewhere; if neither is
 available the worker runs unpinned and says so.
 """
+
 import argparse
 import ctypes
 import os
@@ -62,15 +63,30 @@ def _worker(cpu: int, buffer_mb: int, stop) -> None:
 def main() -> None:
     ncpu = os.cpu_count() or 2
     ap = argparse.ArgumentParser(description="Shared-L3 contention load generator.")
-    ap.add_argument("--workers", type=int, default=max(1, ncpu - 2),
-                    help="number of streaming worker processes (default: cpus-2)")
-    ap.add_argument("--buffer-mb", type=int, default=64,
-                    help="per-worker buffer in MiB (must exceed the L3; default 64)")
-    ap.add_argument("--cpus", default=None,
-                    help="comma-separated CPUs to pin workers to "
-                         "(default: all logical CPUs except 0 and 1)")
-    ap.add_argument("--seconds", type=float, default=0.0,
-                    help="run duration; 0 (default) = until Ctrl-C / terminated")
+    ap.add_argument(
+        "--workers",
+        type=int,
+        default=max(1, ncpu - 2),
+        help="number of streaming worker processes (default: cpus-2)",
+    )
+    ap.add_argument(
+        "--buffer-mb",
+        type=int,
+        default=64,
+        help="per-worker buffer in MiB (must exceed the L3; default 64)",
+    )
+    ap.add_argument(
+        "--cpus",
+        default=None,
+        help="comma-separated CPUs to pin workers to "
+        "(default: all logical CPUs except 0 and 1)",
+    )
+    ap.add_argument(
+        "--seconds",
+        type=float,
+        default=0.0,
+        help="run duration; 0 (default) = until Ctrl-C / terminated",
+    )
     args = ap.parse_args()
 
     if args.cpus:
@@ -87,9 +103,11 @@ def main() -> None:
         procs.append((p, cpu))
 
     total_mb = args.workers * args.buffer_mb
-    print(f"[l3_load] {args.workers} workers x {args.buffer_mb} MiB "
-          f"= {total_mb} MiB streamed, pinned to CPUs "
-          f"{sorted({c for _, c in procs})} (CPU 0 left free for the probe)")
+    print(
+        f"[l3_load] {args.workers} workers x {args.buffer_mb} MiB "
+        f"= {total_mb} MiB streamed, pinned to CPUs "
+        f"{sorted({c for _, c in procs})} (CPU 0 left free for the probe)"
+    )
     for p, cpu in procs:
         print(f"[l3_load]   worker pid={p.pid} -> CPU {cpu}")
     sys.stdout.flush()

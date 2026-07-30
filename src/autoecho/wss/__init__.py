@@ -5,6 +5,7 @@ working-set size. This is the signal from which cache-level capacities are
 inferred (cf. lmbench ``lat_mem_rd``). It replaces the flawed sample-based
 probe, whose write-before-read pattern guaranteed an L1 hit on every access.
 """
+
 from __future__ import annotations  # allow "int | None" on Python 3.9
 
 import numpy as np
@@ -97,8 +98,9 @@ def sweep(
         # Amortise more for larger sets; cap to bound total runtime.
         nslots = max(2, size // line)
         this_hops = int(min(max(hops, nslots * HOPS_PER_SLOT), MAX_HOPS))
-        ticks = wss_probe_c.measure_wss(size, int(line), this_hops, repeats, seed,
-                                        bool(huge_pages))
+        ticks = wss_probe_c.measure_wss(
+            size, int(line), this_hops, repeats, seed, bool(huge_pages)
+        )
         rows.append(
             {
                 "wss_bytes": size,

@@ -24,6 +24,7 @@ Usage::
 
     python capacity_ci.py data/intel_ci/wss_curves_all.csv
 """
+
 import argparse
 
 import numpy as np
@@ -45,12 +46,20 @@ def _human(n: float) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("all_csv", help="wss_curves_all.csv from a --runs N sweep")
-    ap.add_argument("--penalty", type=float, default=None,
-                    help="override the automatic path with PELT at this penalty "
-                         "(sensitivity check only; omit for the productive path)")
-    ap.add_argument("--ground-truth", type=float, default=None,
-                    help="nominal size in MiB of the deepest cache, to report the "
-                         "median capacity's error against it (e.g. 20 for a 20 MiB L3)")
+    ap.add_argument(
+        "--penalty",
+        type=float,
+        default=None,
+        help="override the automatic path with PELT at this penalty "
+        "(sensitivity check only; omit for the productive path)",
+    )
+    ap.add_argument(
+        "--ground-truth",
+        type=float,
+        default=None,
+        help="nominal size in MiB of the deepest cache, to report the "
+        "median capacity's error against it (e.g. 20 for a 20 MiB L3)",
+    )
     args = ap.parse_args()
 
     df = pd.read_csv(args.all_csv)
@@ -68,30 +77,41 @@ def main() -> None:
 
     modal = max(set(nlevels), key=nlevels.count)
     n_modal = nlevels.count(modal)
-    rule = "automatic (Silhouette count + penalty-free Dynp)" \
-        if args.penalty is None else f"PELT penalty={args.penalty}"
+    rule = (
+        "automatic (Silhouette count + penalty-free Dynp)"
+        if args.penalty is None
+        else f"PELT penalty={args.penalty}"
+    )
     print(f"Per-level detected capacity over {len(runs)} sweeps [{rule}]")
-    print(f"  level counts per sweep: {nlevels} "
-          f"(modal {modal}, in {n_modal}/{len(runs)} sweeps)\n")
-    print(f"{'level':<6}{'median':>12}{'min':>12}{'max':>12}{'n':>5}"
-          f"{'  per-sweep values':<20}")
+    print(
+        f"  level counts per sweep: {nlevels} "
+        f"(modal {modal}, in {n_modal}/{len(runs)} sweeps)\n"
+    )
+    print(
+        f"{'level':<6}{'median':>12}{'min':>12}{'max':>12}{'n':>5}"
+        f"{'  per-sweep values':<20}"
+    )
     print("-" * 62)
     for i in sorted(per_level):
         v = np.array(per_level[i])
         name = NAMES[i] if i < len(NAMES) else f"L{i+1}"
         uniq = sorted({_human(x) for x in v})
-        print(f"{name:<6}{_human(np.median(v)):>12}{_human(v.min()):>12}"
-              f"{_human(v.max()):>12}{len(v):>5}  {', '.join(uniq)}")
+        print(
+            f"{name:<6}{_human(np.median(v)):>12}{_human(v.min()):>12}"
+            f"{_human(v.max()):>12}{len(v):>5}  {', '.join(uniq)}"
+        )
 
     if args.ground_truth and per_level:
         deepest = max(per_level)
         v = np.array(per_level[deepest])
         gt = args.ground_truth * 1024 * 1024
         med = float(np.median(v))
-        print(f"\nDeepest cache vs nominal {args.ground_truth:g} MiB: "
-              f"median {_human(med)} ({100 * (med - gt) / gt:+.1f}%), "
-              f"min {_human(v.min())} ({100 * (v.min() - gt) / gt:+.1f}%), "
-              f"max {_human(v.max())} ({100 * (v.max() - gt) / gt:+.1f}%)")
+        print(
+            f"\nDeepest cache vs nominal {args.ground_truth:g} MiB: "
+            f"median {_human(med)} ({100 * (med - gt) / gt:+.1f}%), "
+            f"min {_human(v.min())} ({100 * (v.min() - gt) / gt:+.1f}%), "
+            f"max {_human(v.max())} ({100 * (v.max() - gt) / gt:+.1f}%)"
+        )
         n_at_max = int((v == v.max()).sum())
         print(f"  {n_at_max}/{len(v)} sweeps detected {_human(v.max())}")
 

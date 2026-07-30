@@ -4,6 +4,7 @@ Consolidated in one place so the WSS probe and the legacy baseline probe share a
 single implementation. Previously each module defined its own
 ``get_timer_resolution_ns`` with subtly different (and inconsistent) behaviour.
 """
+
 import platform
 import subprocess
 

@@ -8,6 +8,7 @@ The fixture reproduces the documented `lat_mem_rd` stdout format: a "stride=N"
 header line followed by "<size_in_MB> <latency_ns>" pairs, with sizes as
 fractional megabytes.
 """
+
 import csv
 import importlib.util
 from pathlib import Path
@@ -17,7 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 spec = importlib.util.spec_from_file_location(
-    "crosscheck_lmbench", ROOT / "crosscheck_lmbench.py"
+    "crosscheck_lmbench", ROOT / "scripts" / "crosscheck_lmbench.py"
 )
 crosscheck = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(crosscheck)
@@ -60,7 +61,7 @@ def test_converts_megabytes_to_bytes_and_kib(raw):
     rows = crosscheck.parse_lmbench(str(raw))
     by_latency = {round(r[2], 3): r for r in rows}
     one_mb = by_latency[4.769]
-    assert one_mb[0] == 1024 * 1024          # wss_bytes
+    assert one_mb[0] == 1024 * 1024  # wss_bytes
     assert one_mb[1] == pytest.approx(1024)  # wss_kib
 
 
@@ -73,9 +74,7 @@ def test_skips_header_and_nonnumeric_lines(raw):
 
 def test_output_csv_matches_wss_curve_schema(raw, tmp_path, monkeypatch):
     out = tmp_path / "lmbench_curve.csv"
-    monkeypatch.setattr(
-        "sys.argv", ["crosscheck_lmbench.py", str(raw), "-o", str(out)]
-    )
+    monkeypatch.setattr("sys.argv", ["crosscheck_lmbench.py", str(raw), "-o", str(out)])
     crosscheck.main()
 
     with open(out) as f:

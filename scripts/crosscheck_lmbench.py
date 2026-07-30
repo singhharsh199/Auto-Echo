@@ -15,6 +15,7 @@ Usage on a Linux machine with lmbench installed:
 lat_mem_rd emits lines of "<size_in_MB> <latency_ns>" (size may be fractional),
 optionally interleaved with stride header lines that this parser skips.
 """
+
 import argparse
 import csv
 import sys
@@ -40,21 +41,27 @@ def parse_lmbench(path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Convert lmbench lat_mem_rd output to wss_curve.csv")
+    ap = argparse.ArgumentParser(
+        description="Convert lmbench lat_mem_rd output to wss_curve.csv"
+    )
     ap.add_argument("input", help="lat_mem_rd stdout captured to a file")
     ap.add_argument("-o", "--output", default="lmbench_curve.csv")
     args = ap.parse_args()
 
     rows = parse_lmbench(args.input)
     if not rows:
-        sys.exit("No valid '<size_MB> <latency_ns>' rows found — is this lat_mem_rd output?")
+        sys.exit(
+            "No valid '<size_MB> <latency_ns>' rows found — is this lat_mem_rd output?"
+        )
     rows.sort(key=lambda r: r[0])
     with open(args.output, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["wss_bytes", "wss_kib", "latency_ns"])
         w.writerows(rows)
-    print(f"Wrote {len(rows)} points to {args.output} "
-          f"(WSS {rows[0][0]//1024} KiB .. {rows[-1][0]//1024//1024} MiB)")
+    print(
+        f"Wrote {len(rows)} points to {args.output} "
+        f"(WSS {rows[0][0]//1024} KiB .. {rows[-1][0]//1024//1024} MiB)"
+    )
 
 
 if __name__ == "__main__":

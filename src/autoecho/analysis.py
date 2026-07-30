@@ -19,16 +19,18 @@ Two complementary, unsupervised approaches are provided and reconciled:
 Boundaries use robust percentile statistics rather than raw min/max, so a
 single mis-measured point cannot drag a cache boundary.
 """
+
 import warnings
+from collections.abc import Sequence
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
+import ruptures as rpt
 from scipy.signal import medfilt
 from sklearn.cluster import DBSCAN
 from sklearn.metrics import silhouette_score
 from sklearn.mixture import GaussianMixture
-
-import ruptures as rpt
 
 warnings.filterwarnings("ignore")
 
@@ -45,8 +47,19 @@ LEVEL_NAMES = ["L1 Cache", "L2 Cache", "L3 Cache", "L4 Cache", "L5 Cache"]
 # for cross-check search the same k range.
 DEFAULT_MAX_K = 8
 
+#: Floor applied before taking a logarithm, so a zero or negative latency from a
+#: mis-timed sample cannot produce -inf and destroy the whole segmentation.
+LOG_FLOOR_NS = 1e-6
 
-def _exact_1d_kmeans(x, kmax: int):
+#: Seed for the Gaussian-mixture EM fit, which is the only estimator in the
+#: ensemble still fitted heuristically (§3.4). The productive counting path is an
+#: exact dynamic program and has no random state.
+GMM_RANDOM_STATE = 42
+
+
+def _exact_1d_kmeans(
+    x: npt.ArrayLike, kmax: int
+) -> tuple[dict[int, float], dict[int, np.ndarray]]:
     """Globally optimal 1-D k-means for every k in 1..kmax, by dynamic programming.
 
     K-Means is normally solved by Lloyd's algorithm, a local-search heuristic with
@@ -109,10 +122,11 @@ def _exact_1d_kmeans(x, kmax: int):
 def _log_latency(curve: pd.DataFrame) -> np.ndarray:
     """Clustering feature: log-latency, so that widely separated levels
     (L1 ~1.5 ns vs DRAM ~130 ns) do not swamp the finer L1/L2 gap."""
-    return np.log(np.maximum(curve["latency_ns"].values, 1e-6)).reshape(-1, 1)
+    return np.log(np.maximum(curve["latency_ns"].values, LOG_FLOOR_NS)).reshape(-1, 1)
 
 
 def _human_bytes(n: float) -> str:
+    """Format a byte count in binary units (KiB/MiB/GiB) for report tables."""
     for unit in ["B", "KiB", "MiB", "GiB"]:
         if abs(n) < 1024.0:
             return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
@@ -120,7 +134,7 @@ def _human_bytes(n: float) -> str:
     return f"{n:.1f} TiB"
 
 
-def _plateau_is_flat(lat, tol: float = 0.15) -> bool:
+def _plateau_is_flat(lat: npt.ArrayLike, tol: float = 0.15) -> bool:
     """True if a plateau's latency spread (p90/p10) is within ``tol`` (i.e. the
     plateau is genuinely flat, not sloping). The onset estimator is only
     meaningful on a flat plateau."""
@@ -129,7 +143,12 @@ def _plateau_is_flat(lat, tol: float = 0.15) -> bool:
     return lo > 0 and (hi / lo - 1.0) <= tol
 
 
-def _onset_capacity(wss, lat, tau: float = 0.15, floor_pct: int = 10) -> float:
+def _onset_capacity(
+    wss: npt.ArrayLike,
+    lat: npt.ArrayLike,
+    tau: float = 0.15,
+    floor_pct: int = 10,
+) -> float:
     """Capacity as the *onset* of the rise: the last size still on the plateau
     floor before latency first departs it by ``tau`` (the +15% departure
     threshold of §3.4). Exact on a flat plateau with a sharp knee; use only when
@@ -141,7 +160,7 @@ def _onset_capacity(wss, lat, tau: float = 0.15, floor_pct: int = 10) -> float:
     floor = float(np.percentile(lat, floor_pct))
     thresh = floor * (1.0 + tau)
     onset = float(wss[0])
-    for w, x in zip(wss, lat):
+    for w, x in zip(wss, lat, strict=True):
         if x <= thresh:
             onset = float(w)
         else:
@@ -149,7 +168,12 @@ def _onset_capacity(wss, lat, tau: float = 0.15, floor_pct: int = 10) -> float:
     return onset
 
 
-def _level_capacity(wss, lat, method: str, next_wss: float | None = None) -> float:
+def _level_capacity(
+    wss: npt.ArrayLike,
+    lat: npt.ArrayLike,
+    method: str,
+    next_wss: float | None = None,
+) -> float:
     """Estimate a cache's capacity from its plateau's working-set sizes/latencies.
 
     ``edge`` (default): the plateau's upper edge -- stable, but biased +16-23%
@@ -161,7 +185,7 @@ def _level_capacity(wss, lat, method: str, next_wss: float | None = None) -> flo
     next segment's first working set), i.e. the centre of the transition on the
     log axis the sweep actually samples; needs ``next_wss``, and degenerates to
     ``edge`` without it. See the §5.4 capacity-estimator comparison.
-    
+
     :param next_wss: the first working-set size of the *following* level, i.e.
         the first size no longer served at this plateau's latency. Only the
         ``midpoint`` estimator consumes it.
@@ -180,7 +204,7 @@ def _level_capacity(wss, lat, method: str, next_wss: float | None = None) -> flo
     return float(wss.max())  # "edge" (default)
 
 
-def _knee_index(xs, ys) -> int:
+def _knee_index(xs: npt.ArrayLike, ys: npt.ArrayLike) -> int:
     """Index of the knee of ``(xs, ys)``: the point of maximum perpendicular
     distance from the chord joining the first and last points, on min-max
     normalised axes (the standard parameter-free knee/elbow heuristic)."""
@@ -194,7 +218,12 @@ def _knee_index(xs, ys) -> int:
     return int(np.argmax(dist))
 
 
-def _auto_segments(curve, signal, kmax: int = DEFAULT_MAX_K, min_size: int = 3):
+def _auto_segments(
+    curve: pd.DataFrame,
+    signal: np.ndarray,
+    kmax: int = DEFAULT_MAX_K,
+    min_size: int = 3,
+) -> list[int]:
     """Architecture-agnostic automatic segmentation, returning breakpoints
     (segment end indices, last == n) with no manual penalty.
 
@@ -255,7 +284,7 @@ def detect_levels_changepoint(
     if len(y) >= k:
         y = medfilt(y, kernel_size=k)
 
-    signal = np.log(np.maximum(y, 1e-6)).reshape(-1, 1)
+    signal = np.log(np.maximum(y, LOG_FLOOR_NS)).reshape(-1, 1)
 
     if penalty is None:
         # Automatic, architecture-agnostic model selection: K-Means+Silhouette
@@ -274,7 +303,7 @@ def detect_levels_changepoint(
 
     # Robust per-segment latency (median), then merge look-alike neighbours.
     def seg_latency(seg):
-        return float(np.median(curve["latency_ns"].values[seg[0]:seg[1]]))
+        return float(np.median(curve["latency_ns"].values[seg[0] : seg[1]]))
 
     merged = [segments[0]]
     for seg in segments[1:]:
@@ -342,7 +371,9 @@ def cluster_level_count(
         if algorithm == "kmeans":
             labels = exact[k]
         else:
-            labels = GaussianMixture(n_components=k, random_state=42).fit_predict(X)
+            labels = GaussianMixture(
+                n_components=k, random_state=GMM_RANDOM_STATE
+            ).fit_predict(X)
         if len(set(labels)) < 2:
             continue
         score = silhouette_score(X, labels)
@@ -369,7 +400,7 @@ def elbow_method(curve: pd.DataFrame, max_k: int = DEFAULT_MAX_K) -> tuple:
     costs = _exact_1d_kmeans(X, ks[-1])[0]
     inertias = [costs[k] for k in ks]
     if len(ks) < 3:
-        return (ks[-1] if ks else 1), list(zip(ks, inertias))
+        return (ks[-1] if ks else 1), list(zip(ks, inertias, strict=True))
 
     ks_a = np.array(ks, dtype=float)
     iner = np.array(inertias, dtype=float)
@@ -380,10 +411,12 @@ def elbow_method(curve: pd.DataFrame, max_k: int = DEFAULT_MAX_K) -> tuple:
     denom = np.hypot(y2 - y1, x2 - x1) or 1.0
     dist = np.abs((y2 - y1) * x - (x2 - x1) * y + x2 * y1 - y2 * x1) / denom
     elbow_k = int(ks_a[int(np.argmax(dist))])
-    return elbow_k, list(zip(ks, inertias))
+    return elbow_k, list(zip(ks, inertias, strict=True))
 
 
-def penalty_sensitivity(curve: pd.DataFrame, penalties=None) -> dict:
+def penalty_sensitivity(
+    curve: pd.DataFrame, penalties: Sequence[float] | None = None
+) -> dict[float, int]:
     """Report the detected level count across a range of PELT penalties, to show
     the result is not an artefact of one hyper-parameter choice."""
     if penalties is None:
@@ -401,7 +434,9 @@ def cluster_level_count_dbscan(curve: pd.DataFrame, eps: float = 0.3) -> int:
 
 
 def changepoint_level_count(
-    curve: pd.DataFrame, kmax: int = DEFAULT_MAX_K, min_size: int = 3,
+    curve: pd.DataFrame,
+    kmax: int = DEFAULT_MAX_K,
+    min_size: int = 3,
     smooth_kernel: int = 3,
 ) -> int:
     """Independent change-point estimate of the level *count*, via the knee of
@@ -419,7 +454,7 @@ def changepoint_level_count(
     k = smooth_kernel if smooth_kernel % 2 == 1 else smooth_kernel + 1
     if len(y) >= k:
         y = medfilt(y, kernel_size=k)
-    signal = np.log(np.maximum(y, 1e-6)).reshape(-1, 1)
+    signal = np.log(np.maximum(y, LOG_FLOOR_NS)).reshape(-1, 1)
     n = len(signal)
     kmax = max(2, min(kmax, n // max(min_size, 1)))
     algo = rpt.Dynp(model="l2", min_size=min_size).fit(signal)
@@ -453,8 +488,9 @@ def silhouette_curve(curve: pd.DataFrame, max_k: int = DEFAULT_MAX_K) -> list:
     return out
 
 
-def analyze(curve: pd.DataFrame, penalty: float | None = None,
-            capacity_method: str = "edge") -> dict:
+def analyze(
+    curve: pd.DataFrame, penalty: float | None = None, capacity_method: str = "edge"
+) -> dict:
     """Run the full level-discovery analysis and reconcile the estimators.
 
     ``penalty=None`` (default) selects the *number* of levels by K-Means +
@@ -464,8 +500,9 @@ def analyze(curve: pd.DataFrame, penalty: float | None = None,
     an **independent** change-point count via the cost-knee criterion
     (:func:`changepoint_level_count`), which is *not* seeded by the Silhouette k,
     so the agreement it shows is genuine rather than circular."""
-    levels = detect_levels_changepoint(curve, penalty=penalty,
-                                       capacity_method=capacity_method)
+    levels = detect_levels_changepoint(
+        curve, penalty=penalty, capacity_method=capacity_method
+    )
     k_kmeans, sil_kmeans = cluster_level_count(curve, algorithm="kmeans")
     k_gmm, sil_gmm = cluster_level_count(curve, algorithm="gmm")
     k_dbscan = cluster_level_count_dbscan(curve)

@@ -5,6 +5,7 @@ validates itself on whatever machine it runs on:
   * macOS  -> sysctl hw.perflevelN.* / hw.* cache sizes
   * Linux  -> /sys/devices/system/cpu/cpu0/cache/index*/size
 """
+
 import platform
 import subprocess
 
@@ -51,7 +52,8 @@ def get_machine_label() -> str:
         if system == "Darwin":
             brand = subprocess.check_output(
                 ["sysctl", "-n", "machdep.cpu.brand_string"],
-                stderr=subprocess.DEVNULL, text=True,
+                stderr=subprocess.DEVNULL,
+                text=True,
             ).strip()
         elif system == "Linux":
             with open("/proc/cpuinfo") as f:
@@ -63,9 +65,14 @@ def get_machine_label() -> str:
             # PowerShell CIM query for the marketing name (e.g. 'Intel(R)
             # Core(TM) i5-13450HX'); robust where the legacy `wmic` is absent.
             out = subprocess.check_output(
-                ["powershell", "-NoProfile", "-Command",
-                 "(Get-CimInstance Win32_Processor).Name"],
-                stderr=subprocess.DEVNULL, text=True,
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "(Get-CimInstance Win32_Processor).Name",
+                ],
+                stderr=subprocess.DEVNULL,
+                text=True,
             )
             lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
             brand = lines[0] if lines else ""
@@ -75,7 +82,12 @@ def get_machine_label() -> str:
     return f"{brand} ({arch}, {system})"
 
 
-def _sysctl(name: str):
+def _sysctl(name: str) -> int | None:
+    """Read one integer ``sysctl`` value, or ``None`` where unavailable.
+
+    Used for the macOS ground-truth path. Returns ``None`` rather than raising
+    so a missing key degrades to "unknown" instead of aborting a run.
+    """
     try:
         out = subprocess.check_output(["sysctl", "-n", name], stderr=subprocess.DEVNULL)
         return int(out.strip())
@@ -109,8 +121,11 @@ def _windows_ground_truth_percore() -> dict:
     try:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         glpi_ex = kernel32.GetLogicalProcessorInformationEx
-        glpi_ex.argtypes = [wintypes.DWORD, ctypes.c_void_p,
-                            ctypes.POINTER(wintypes.DWORD)]
+        glpi_ex.argtypes = [
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
         glpi_ex.restype = wintypes.BOOL
 
         length = wintypes.DWORD(0)
@@ -171,11 +186,14 @@ def _windows_ground_truth_cim() -> dict:
 
         out = subprocess.check_output(
             [
-                "powershell", "-NoProfile", "-Command",
+                "powershell",
+                "-NoProfile",
+                "-Command",
                 "Get-CimInstance Win32_CacheMemory | "
                 "Select-Object Level,MaxCacheSize | ConvertTo-Json",
             ],
-            stderr=subprocess.DEVNULL, text=True,
+            stderr=subprocess.DEVNULL,
+            text=True,
         )
         data = json.loads(out)
         if isinstance(data, dict):
@@ -235,8 +253,10 @@ def get_ground_truth() -> dict:
                     continue
                 if ctype == "Instruction":
                     continue  # not exercised by a load-latency sweep
-                mult = 1024 if size_str.endswith("K") else (
-                    1024 * 1024 if size_str.endswith("M") else 1
+                mult = (
+                    1024
+                    if size_str.endswith("K")
+                    else (1024 * 1024 if size_str.endswith("M") else 1)
                 )
                 size = int(size_str.rstrip("KM")) * mult
                 gt[f"L{level}"] = size
@@ -253,8 +273,9 @@ def get_ground_truth() -> dict:
     return gt
 
 
-def validate(detected_capacities: list, tolerance_octaves: float = 1.0,
-             ground_truth: dict = None) -> dict:
+def validate(
+    detected_capacities: list, tolerance_octaves: float = 1.0, ground_truth: dict = None
+) -> dict:
     """Compare detected cache capacities to ground truth.
 
     A detected capacity matches a ground-truth cache if they are within
@@ -302,7 +323,7 @@ def validate(detected_capacities: list, tolerance_octaves: float = 1.0,
                 if err <= tolerance_octaves:
                     cost[i, j] = err
         rows, cols = linear_sum_assignment(cost)
-        for i, j in zip(rows, cols):
+        for i, j in zip(rows, cols, strict=True):
             if cost[i, j] < INFEASIBLE:
                 match_for_gt[i] = int(j)
                 used[j] = True
@@ -332,8 +353,9 @@ def validate(detected_capacities: list, tolerance_octaves: float = 1.0,
     n_false_positive = sum(1 for u in used if not u)
     recall = matched / n_gt if n_gt else 0.0
     precision = matched / n_det if n_det else 0.0
-    f1 = (2 * precision * recall / (precision + recall)
-          if (precision + recall) > 0 else 0.0)
+    f1 = (
+        2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    )
     return {
         "ground_truth": gt,
         "detected_capacities": detected,

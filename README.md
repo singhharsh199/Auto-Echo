@@ -41,9 +41,19 @@ source .venv/bin/activate
 # 3. Build the tool 
 pip install -e .
 
-# 4. Run the experiment! (This takes a few seconds)
-python -m autoecho --method wss --max-mb 256 --output-dir data
+# 4. Run the experiment! (about 3 minutes for a 256 MiB sweep)
+python -m autoecho --method wss --max-mb 256 --output-dir data/my_run
 ```
+
+> **Note on `--output-dir`.** Write your own run to a *new* directory, as above.
+> `data/` itself holds the committed Apple M1 sweep that the dissertation's §5.2
+> tables are computed from, and `data/intel_*/` the Intel sweeps; pointing
+> `--output-dir` at one of those overwrites the published evidence with a fresh
+> measurement of *your* machine. Re-measuring the M1 here, for instance, moves the
+> detected L2 boundary from the reported 13.9 MiB to 9.8 MiB, because a live
+> machine's deep-cache region varies between runs (§5.3.2 quantifies exactly this
+> effect). The dashboard reads `data/` by default — see `frontend/README.md` to
+> point it at your own directory.
 
 ### Step 3: View the Dashboard (Highly Recommended)
 We have a beautiful visual dashboard to show you the results! Once you've generated data in Step 2, open a new terminal window and run this to view it:
@@ -85,8 +95,7 @@ src/autoecho/
   evaluation.py                      comparative evaluation across sweeps
   report.py                          plots + Markdown report
   probe/, preprocessing.py, clustering.py   legacy sample-based baseline
-compare_curves.py                    overlay curves from several machines
-crosscheck_lmbench.py                convert lmbench lat_mem_rd output for overlay
+scripts/                             One-off experiments and dissertation cross-checks
 docs/                                literature review, methodology, dissertation, guides
 frontend/                            React/Vite dashboard for visualizing results
 ```

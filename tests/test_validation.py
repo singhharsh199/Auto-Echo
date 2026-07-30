@@ -1,4 +1,5 @@
 """Tests for ground-truth validation and machine labelling."""
+
 import platform
 
 import pytest
@@ -60,8 +61,9 @@ def test_validate_optimal_matching_beats_greedy():
     # GT L2=2 MiB, L3=6 MiB; knees at 1.1 MiB and 3.0 MiB. Greedy nearest-first
     # would pair L2->3.0 MiB and strand L3; optimal assignment matches BOTH.
     gt = {"L2": 2 * 1024 * 1024, "L3": 6 * 1024 * 1024}
-    result = validate([1.1 * 1024 * 1024, 3.0 * 1024 * 1024], ground_truth=gt,
-                      tolerance_octaves=1.0)
+    result = validate(
+        [1.1 * 1024 * 1024, 3.0 * 1024 * 1024], ground_truth=gt, tolerance_octaves=1.0
+    )
     assert result["n_matched"] == 2
     assert result["recall"] == 1.0
 
@@ -75,19 +77,22 @@ def test_machine_label_normalises_amd64_to_x86_64():
     # 'AMD64' (Windows' x86-64 ISA token) must never leak into a label as a
     # vendor; it is normalised to 'x86-64'.
     from autoecho.validation import _clean_brand, _normalize_arch
+
     assert _normalize_arch("AMD64") == "x86-64"
     assert _normalize_arch("x86_64") == "x86-64"
     assert _clean_brand("Intel(R) Core(TM)  i5-13450HX") == "Intel Core i5-13450HX"
 
 
-@pytest.mark.skipif(platform.system() != "Windows",
-                    reason="per-core cache query is Windows-specific")
+@pytest.mark.skipif(
+    platform.system() != "Windows", reason="per-core cache query is Windows-specific"
+)
 def test_windows_percore_ground_truth_is_not_aggregate():
     # GetLogicalProcessorInformationEx must return PER-CORE cache sizes, not the
     # per-socket AGGREGATE that Win32_CacheMemory reports (the historical bug:
     # L1 summed to 288 KiB across the P-cores, which zeroed validation recall).
     # Guard the regression structurally so it is not pinned to one CPU model.
     from autoecho.validation import _windows_ground_truth_percore
+
     gt = _windows_ground_truth_percore()
     if not gt:
         pytest.skip("GetLogicalProcessorInformationEx returned no cache records")

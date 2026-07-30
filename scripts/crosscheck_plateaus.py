@@ -31,6 +31,7 @@ Usage::
         data/intel_i5_13450hx/wss_curve.csv \
         data/intel_i5_13450hx/lmbench_curve.csv
 """
+
 import argparse
 
 import numpy as np
@@ -76,11 +77,15 @@ def _infer_on_foreign_curve(lm: pd.DataFrame, gt: dict) -> None:
     restatement of the probe comparison."""
     levels = detect_levels_changepoint(lm)
     k, sil = cluster_level_count(lm)
-    print(f"Productive count (exact 1-D k-means + Silhouette): k = {k} "
-          f"(score {sil:.3f})")
-    print(f"Cross-checks: Elbow = {elbow_method(lm)[0]}, "
-          f"DBSCAN = {cluster_level_count_dbscan(lm)}, "
-          f"change-point cost-knee = {changepoint_level_count(lm)}")
+    print(
+        f"Productive count (exact 1-D k-means + Silhouette): k = {k} "
+        f"(score {sil:.3f})"
+    )
+    print(
+        f"Cross-checks: Elbow = {elbow_method(lm)[0]}, "
+        f"DBSCAN = {cluster_level_count_dbscan(lm)}, "
+        f"change-point cost-knee = {changepoint_level_count(lm)}"
+    )
     print(f"Segmenter returned {len(levels)} levels:\n")
 
     print(f"{'Level':<10}{'capacity':>12}{'median':>10}{'p5-p95':>18}{'points':>8}")
@@ -88,13 +93,17 @@ def _infer_on_foreign_curve(lm: pd.DataFrame, gt: dict) -> None:
     for _, r in levels.iterrows():
         cap = r["capacity_human"]
         band = f"{r['latency_ns_p5']:.2f}-{r['latency_ns_p95']:.2f} ns"
-        print(f"{r['level_name']:<10}{cap:>12}{r['latency_ns_median']:>8.2f}ns"
-              f"{band:>18}{int(r['n_points']):>8}")
+        print(
+            f"{r['level_name']:<10}{cap:>12}{r['latency_ns_median']:>8.2f}ns"
+            f"{band:>18}{int(r['n_points']):>8}"
+        )
 
     caps = [c for c in levels["capacity_bytes"].dropna()]
     res = validation.validate(caps, ground_truth=gt)
-    print("\nValidated against documented per-core sizes "
-          "(one-octave tolerance, Hungarian matching):")
+    print(
+        "\nValidated against documented per-core sizes "
+        "(one-octave tolerance, Hungarian matching):"
+    )
     for cache in res["matches"]:
         det = cache["detected_bytes"]
         det_s = _fmt_bytes(det) if det else "-"
@@ -102,12 +111,16 @@ def _infer_on_foreign_curve(lm: pd.DataFrame, gt: dict) -> None:
         err_s = f"{err:+.1f}%" if err is not None else "-"
         oct_s = f"{cache['error_octaves']:.2f} oct" if det else "-"
         mark = "MATCH" if cache["match"] else "MISS"
-        print(f"  {cache['cache']:<4} gt={_fmt_bytes(cache['ground_truth_bytes']):>10}"
-              f"  detected={det_s:>10}  {err_s:>8}  {oct_s:>9}  {mark}")
-    print(f"  recall={res['recall']:.1%} ({res['n_matched']}/{res['n_ground_truth']})  "
-          f"precision={res['precision']:.1%} "
-          f"({res['n_matched']}/{res['n_detected']}, "
-          f"{res['n_false_positive']} false positive(s))  f1={res['f1']:.2f}")
+        print(
+            f"  {cache['cache']:<4} gt={_fmt_bytes(cache['ground_truth_bytes']):>10}"
+            f"  detected={det_s:>10}  {err_s:>8}  {oct_s:>9}  {mark}"
+        )
+    print(
+        f"  recall={res['recall']:.1%} ({res['n_matched']}/{res['n_ground_truth']})  "
+        f"precision={res['precision']:.1%} "
+        f"({res['n_matched']}/{res['n_detected']}, "
+        f"{res['n_false_positive']} false positive(s))  f1={res['f1']:.2f}"
+    )
 
 
 def main() -> None:
@@ -141,8 +154,10 @@ def main() -> None:
         # lmbench is", matching the dissertation's Table 13.
         ratio = lm_med / ae_med if ae_med else float("nan")
         rng = f"{_fmt_bytes(lo)}-{_fmt_bytes(hi)}"
-        print(f"{r['level_name']:<10}{rng:>20}{ae_med:>10.2f}ns{lm_med:>14.2f}ns"
-              f"{ratio:>12.2f}x{len(ae_seg):>7}/{len(lm_seg):<4}")
+        print(
+            f"{r['level_name']:<10}{rng:>20}{ae_med:>10.2f}ns{lm_med:>14.2f}ns"
+            f"{ratio:>12.2f}x{len(ae_seg):>7}/{len(lm_seg):<4}"
+        )
         bands.append((r["level_name"], lo, hi))
 
     print()
@@ -151,20 +166,24 @@ def main() -> None:
     print("=" * 83)
     # Interpolate Auto-Echo onto lmbench's grid in log-WSS: the two tools sample
     # different sizes, so a point-wise ratio needs a common abscissa.
-    ae_at_lm = np.interp(np.log(lm["wss_bytes"].values),
-                         np.log(ae["wss_bytes"].values),
-                         ae["latency_ns"].values)
+    ae_at_lm = np.interp(
+        np.log(lm["wss_bytes"].values),
+        np.log(ae["wss_bytes"].values),
+        ae["latency_ns"].values,
+    )
     ratio_pt = lm["latency_ns"].values / ae_at_lm
     print(f"{'Level':<10}{'WSS range':>20}{'min':>10}{'median':>10}{'max':>10}{'n':>6}")
     print("-" * 66)
     for name, lo, hi in bands:
-        m = ((lm["wss_bytes"].values >= lo) & (lm["wss_bytes"].values <= hi))
+        m = (lm["wss_bytes"].values >= lo) & (lm["wss_bytes"].values <= hi)
         if not m.any():
             continue
         rr = ratio_pt[m]
         rng = f"{_fmt_bytes(lo)}-{_fmt_bytes(hi)}"
-        print(f"{name:<10}{rng:>20}{rr.min():>9.2f}x{np.median(rr):>9.2f}x"
-              f"{rr.max():>9.2f}x{m.sum():>6}")
+        print(
+            f"{name:<10}{rng:>20}{rr.min():>9.2f}x{np.median(rr):>9.2f}x"
+            f"{rr.max():>9.2f}x{m.sum():>6}"
+        )
 
     print()
     print("=" * 83)

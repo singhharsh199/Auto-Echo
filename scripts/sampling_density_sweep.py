@@ -23,6 +23,7 @@ Usage:
     python sampling_density_sweep.py measure --densities 5 10 20 --max-mb 256
     python sampling_density_sweep.py subsample data/intel_i5_13450hx/wss_curve.csv
 """
+
 from __future__ import annotations
 
 import argparse
@@ -34,15 +35,21 @@ from autoecho import analysis
 
 def _report(rows: list[dict], title: str) -> None:
     print(f"\n=== {title} ===")
-    print(f"{'pts/octave':>11} {'points':>7} {'selected k':>11} {'silhouette':>11} "
-          f"{'elbow':>6} {'DBSCAN':>7} {'cp-knee':>8}")
+    print(
+        f"{'pts/octave':>11} {'points':>7} {'selected k':>11} {'silhouette':>11} "
+        f"{'elbow':>6} {'DBSCAN':>7} {'cp-knee':>8}"
+    )
     for r in rows:
-        print(f"{r['density']:>11} {r['points']:>7} {r['k']:>11} {r['sil']:>11.4f} "
-              f"{r['elbow']:>6} {r['dbscan']:>7} {r['cp']:>8}")
+        print(
+            f"{r['density']:>11} {r['points']:>7} {r['k']:>11} {r['sil']:>11.4f} "
+            f"{r['elbow']:>6} {r['dbscan']:>7} {r['cp']:>8}"
+        )
     ks = {r["k"] for r in rows}
-    verdict = ("STABLE -- the selected count does not depend on sampling density"
-               if len(ks) == 1 else
-               f"UNSTABLE -- selected k varies across densities: {sorted(ks)}")
+    verdict = (
+        "STABLE -- the selected count does not depend on sampling density"
+        if len(ks) == 1
+        else f"UNSTABLE -- selected k varies across densities: {sorted(ks)}"
+    )
     print(f"  => {verdict}")
 
 
@@ -80,16 +87,20 @@ def cmd_measure(args) -> None:
     rows = []
     for density in args.densities:
         wss.SAMPLES_PER_OCTAVE = density  # read by default_wss_sizes at call time
-        curve = wss.sweep(max_bytes=args.max_mb * 1024 * 1024, seed=args.seed,
-                          huge_pages=use_huge)
+        curve = wss.sweep(
+            max_bytes=args.max_mb * 1024 * 1024, seed=args.seed, huge_pages=use_huge
+        )
         rows.append(_score(curve, density, f"{density}/octave"))
         if args.save:
             path = f"{args.save}/wss_curve_density{density}.csv"
             curve.to_csv(path, index=False)
             print(f"  wrote {path} ({len(curve)} points)")
     pages = "2 MiB large pages" if use_huge else "OS default pages"
-    _report(rows, f"Measured on this machine (max {args.max_mb} MiB, "
-                  f"seed {args.seed}, {pages})")
+    _report(
+        rows,
+        f"Measured on this machine (max {args.max_mb} MiB, "
+        f"seed {args.seed}, {pages})",
+    )
 
 
 def cmd_subsample(args) -> None:
@@ -99,22 +110,28 @@ def cmd_subsample(args) -> None:
         sub = base.iloc[::m].reset_index(drop=True)
         rows.append(_score(sub, f"{args.base_density / m:g}", f"every {m}th"))
     _report(rows, f"Subsampled from {args.curve}")
-    print("  note: densities above the source grid cannot be subsampled -- they "
-          "need a fresh sweep on the machine.")
+    print(
+        "  note: densities above the source grid cannot be subsampled -- they "
+        "need a fresh sweep on the machine."
+    )
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     m = sub.add_parser("measure", help="re-run the probe at each density")
     m.add_argument("--densities", type=int, nargs="+", default=[5, 10, 20])
     m.add_argument("--max-mb", type=int, default=256)
     m.add_argument("--seed", type=int, default=42)
-    m.add_argument("--huge-pages", action="store_true",
-                   help="request a 2 MiB large-page chase buffer (Windows only); "
-                        "aborts rather than silently falling back to 4 KiB pages")
+    m.add_argument(
+        "--huge-pages",
+        action="store_true",
+        help="request a 2 MiB large-page chase buffer (Windows only); "
+        "aborts rather than silently falling back to 4 KiB pages",
+    )
     m.add_argument("--save", default=None, help="directory to write per-density CSVs")
     m.set_defaults(func=cmd_measure)
 

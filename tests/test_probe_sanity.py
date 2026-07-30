@@ -5,6 +5,7 @@ These guard against the compiler optimising the pointer chase away (the
 measured latencies collapse to physically impossible ~0 ns and these tests fail.
 Skipped automatically when the C extension is not built.
 """
+
 import pytest
 
 pytest.importorskip("autoecho.wss_probe_c")

@@ -18,6 +18,7 @@ It underpins the claim in §3.2.1 of the dissertation. Run:
 
     python verify_kmeans_optimality.py
 """
+
 from __future__ import annotations
 
 import argparse
@@ -93,8 +94,10 @@ def audit(label: str, csv_path: str, max_k: int = DEFAULT_MAX_K) -> None:
     X = np.log(np.maximum(curve["latency_ns"].to_numpy(), 1e-6)).reshape(-1, 1)
 
     print(f"\n=== {label} ({len(X)} points, {csv_path}) ===")
-    print(f"{'k':>2} {'WCSS Lloyd':>13} {'WCSS exact':>13} {'gap':>9} "
-          f"{'Sil Lloyd':>10} {'Sil exact':>10}")
+    print(
+        f"{'k':>2} {'WCSS Lloyd':>13} {'WCSS exact':>13} {'gap':>9} "
+        f"{'Sil Lloyd':>10} {'Sil exact':>10}"
+    )
 
     best_lloyd = (0, -1.0)
     best_exact = (0, -1.0)
@@ -115,27 +118,40 @@ def audit(label: str, csv_path: str, max_k: int = DEFAULT_MAX_K) -> None:
         if sil_e > best_exact[1]:
             best_exact = (k, sil_e)
 
-        print(f"{k:>2} {lloyd.inertia_:>13.6f} {exact_cost:>13.6f} {gap:>8.2%} "
-              f"{sil_l:>10.4f} {sil_e:>10.4f}")
+        print(
+            f"{k:>2} {lloyd.inertia_:>13.6f} {exact_cost:>13.6f} {gap:>8.2%} "
+            f"{sil_l:>10.4f} {sil_e:>10.4f}"
+        )
 
-    print(f"\n  Lloyd is globally optimal at k = "
-          f"{[k for k in range(2, max_k + 1) if k not in suboptimal]}")
+    print(
+        f"\n  Lloyd is globally optimal at k = "
+        f"{[k for k in range(2, max_k + 1) if k not in suboptimal]}"
+    )
     print(f"  Lloyd is sub-optimal at   k = {suboptimal or 'none'}")
-    print(f"  Selected level count: Lloyd k={best_lloyd[0]} (silhouette "
-          f"{best_lloyd[1]:.4f}), exact k={best_exact[0]} "
-          f"(silhouette {best_exact[1]:.4f})")
-    verdict = ("UNCHANGED -- the reported count is not a local-optimum artefact"
-               if best_lloyd[0] == best_exact[0]
-               else "CHANGED -- the reported count depends on the solver")
+    print(
+        f"  Selected level count: Lloyd k={best_lloyd[0]} (silhouette "
+        f"{best_lloyd[1]:.4f}), exact k={best_exact[0]} "
+        f"(silhouette {best_exact[1]:.4f})"
+    )
+    verdict = (
+        "UNCHANGED -- the reported count is not a local-optimum artefact"
+        if best_lloyd[0] == best_exact[0]
+        else "CHANGED -- the reported count depends on the solver"
+    )
     print(f"  => {verdict}")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("curves", nargs="*", default=[
-        "Apple M1=data/wss_curve.csv",
-        "Intel i5-13450HX=data/intel_i5_13450hx/wss_curve.csv",
-    ], help="LABEL=path/to/wss_curve.csv (repeatable)")
+    ap.add_argument(
+        "curves",
+        nargs="*",
+        default=[
+            "Apple M1=data/wss_curve.csv",
+            "Intel i5-13450HX=data/intel_i5_13450hx/wss_curve.csv",
+        ],
+        help="LABEL=path/to/wss_curve.csv (repeatable)",
+    )
     args = ap.parse_args()
 
     for spec in args.curves:

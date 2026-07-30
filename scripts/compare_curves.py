@@ -27,6 +27,7 @@ vs lmbench on one core; quiescent vs L3-loaded on one core). Pass --title and
         --title "Auto-Echo vs lmbench lat_mem_rd (Intel i5-13450HX, one core)" \
         --legend-title "Tool" --annotate --output data/crosscheck_intel.png
 """
+
 import argparse
 import os
 import sys
@@ -57,27 +58,44 @@ def _default_label(path: str) -> str:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Overlay WSS latency curves from multiple machines.")
+    ap = argparse.ArgumentParser(
+        description="Overlay WSS latency curves from multiple machines."
+    )
     ap.add_argument("csvs", nargs="+", help="one or more wss_curve.csv files")
     ap.add_argument("--labels", default=None, help="comma-separated labels (one per CSV)")
     ap.add_argument("--output", default="compare_mountain.png", help="output image path")
-    ap.add_argument("--annotate", action="store_true", help="mark detected cache boundaries per machine")
-    ap.add_argument("--penalty", type=float, default=None,
-                    help="change-point penalty when --annotate; omit to use the "
-                         "productive automatic path (Silhouette count + penalty-free "
-                         "Dynp localisation), matching the dissertation's §5 results")
-    ap.add_argument("--title", default="Auto-Echo: Memory Latency Curves Across Machines",
-                    help="figure title; override when the curves are not different "
-                         "machines (e.g. two tools, or two load conditions, on one core)")
-    ap.add_argument("--legend-title", default="Machine",
-                    help="legend heading; override to match --title (e.g. 'Tool', "
-                         "'Condition')")
+    ap.add_argument(
+        "--annotate",
+        action="store_true",
+        help="mark detected cache boundaries per machine",
+    )
+    ap.add_argument(
+        "--penalty",
+        type=float,
+        default=None,
+        help="change-point penalty when --annotate; omit to use the "
+        "productive automatic path (Silhouette count + penalty-free "
+        "Dynp localisation), matching the dissertation's §5 results",
+    )
+    ap.add_argument(
+        "--title",
+        default="Auto-Echo: Memory Latency Curves Across Machines",
+        help="figure title; override when the curves are not different "
+        "machines (e.g. two tools, or two load conditions, on one core)",
+    )
+    ap.add_argument(
+        "--legend-title",
+        default="Machine",
+        help="legend heading; override to match --title (e.g. 'Tool', " "'Condition')",
+    )
     args = ap.parse_args()
 
     if args.labels:
         labels = [s.strip() for s in args.labels.split(",")]
         if len(labels) != len(args.csvs):
-            sys.exit(f"--labels has {len(labels)} entries but {len(args.csvs)} CSVs were given")
+            sys.exit(
+                f"--labels has {len(labels)} entries but {len(args.csvs)} CSVs were given"
+            )
     else:
         labels = [_default_label(p) for p in args.csvs]
 
@@ -85,13 +103,14 @@ def main():
     if args.annotate:
         try:
             from autoecho.analysis import detect_levels_changepoint
+
             detect = detect_levels_changepoint
         except Exception as e:
             print(f"[warn] --annotate disabled (cannot import autoecho.analysis: {e})")
 
     fig, ax = plt.subplots(figsize=(11, 6.5))
 
-    for i, (path, label) in enumerate(zip(args.csvs, labels)):
+    for i, (path, label) in enumerate(zip(args.csvs, labels, strict=True)):
         df = _load(path)
         color = PALETTE[i % len(PALETTE)]
         ax.plot(
@@ -110,7 +129,14 @@ def main():
                 levels = detect(df, penalty=args.penalty)
                 caps = levels["capacity_bytes"].dropna()
                 for cap in caps:
-                    ax.axvline(cap / 1024.0, color=color, linestyle=":", linewidth=1.0, alpha=0.7, zorder=2)
+                    ax.axvline(
+                        cap / 1024.0,
+                        color=color,
+                        linestyle=":",
+                        linewidth=1.0,
+                        alpha=0.7,
+                        zorder=2,
+                    )
             except Exception as e:
                 print(f"[warn] annotation failed for {label}: {e}")
 
@@ -120,8 +146,13 @@ def main():
     ax.set_ylabel("Average access latency (ns) [log]", fontsize=11, fontweight="bold")
     ax.set_title(args.title, fontsize=13, fontweight="bold", pad=12)
     ax.grid(True, which="both", linestyle="-", alpha=0.15)
-    ax.legend(loc="upper left", frameon=True, framealpha=0.9, fontsize=10,
-              title=args.legend_title)
+    ax.legend(
+        loc="upper left",
+        frameon=True,
+        framealpha=0.9,
+        fontsize=10,
+        title=args.legend_title,
+    )
 
     plt.tight_layout()
     out_dir = os.path.dirname(os.path.abspath(args.output))

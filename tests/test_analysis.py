@@ -1,4 +1,5 @@
 """Tests for the level-discovery engine (change-point + clustering)."""
+
 import numpy as np
 import pytest
 
@@ -13,8 +14,14 @@ from autoecho.analysis import (
 
 
 def test_changepoint_finds_all_plateaus(make_curve):
-    curve = make_curve([(64 * 1024, 2.0), (2 * 1024 * 1024, 8.0),
-                        (16 * 1024 * 1024, 40.0), (256 * 1024 * 1024, 120.0)])
+    curve = make_curve(
+        [
+            (64 * 1024, 2.0),
+            (2 * 1024 * 1024, 8.0),
+            (16 * 1024 * 1024, 40.0),
+            (256 * 1024 * 1024, 120.0),
+        ]
+    )
     levels = detect_levels_changepoint(curve, penalty=3.0)
     # Four distinct plateaus should be recovered.
     assert len(levels) == 4
@@ -61,8 +68,10 @@ def test_capacity_method_edge_is_default(three_level_curve):
     # run without error and keep the same segmentation, only the capacity differs.
     base = detect_levels_changepoint(three_level_curve)
     edge = detect_levels_changepoint(three_level_curve, capacity_method="edge")
-    assert (base["capacity_bytes"].fillna(-1).tolist()
-            == edge["capacity_bytes"].fillna(-1).tolist())
+    assert (
+        base["capacity_bytes"].fillna(-1).tolist()
+        == edge["capacity_bytes"].fillna(-1).tolist()
+    )
     for m in ["onset", "hybrid", "midpoint"]:
         lv = detect_levels_changepoint(three_level_curve, capacity_method=m)
         assert len(lv) == len(edge)
@@ -77,11 +86,12 @@ def test_midpoint_is_geometric_mean_of_last_fit_and_first_miss(three_level_curve
     wss = three_level_curve["wss_bytes"].values
 
     assert len(mid) == len(edge)
-    for i in range(len(edge) - 1):          # every level except DRAM has a capacity
+    for i in range(len(edge) - 1):  # every level except DRAM has a capacity
         last_fit = edge["capacity_bytes"].iloc[i]
         first_miss = wss[wss > last_fit].min()
         assert mid["capacity_bytes"].iloc[i] == pytest.approx(
-            np.sqrt(last_fit * first_miss))
+            np.sqrt(last_fit * first_miss)
+        )
         # A real bisection sits strictly between the two, hence above the edge.
         assert last_fit < mid["capacity_bytes"].iloc[i] < first_miss
 
@@ -90,20 +100,24 @@ def test_midpoint_degrades_to_edge_without_a_following_level():
     """With no next segment there is nothing to bisect, so the helper must return
     the edge rather than raise or invent a value."""
     from autoecho.analysis import _level_capacity
+
     wss = np.array([1000.0, 2000.0, 4000.0])
     lat = np.array([1.5, 1.5, 1.5])
     assert _level_capacity(wss, lat, "midpoint", next_wss=None) == 4000.0
     assert _level_capacity(wss, lat, "midpoint", next_wss=0) == 4000.0
-    assert _level_capacity(wss, lat, "midpoint", next_wss=16000.0) == pytest.approx(8000.0)
+    assert _level_capacity(wss, lat, "midpoint", next_wss=16000.0) == pytest.approx(
+        8000.0
+    )
 
 
 def test_onset_helper_lands_on_flat_plateau_knee():
     from autoecho.analysis import _onset_capacity, _plateau_is_flat
+
     wss = np.array([1000.0, 2000.0, 4000.0, 8000.0])
-    lat = np.array([1.5, 1.5, 1.5, 9.0])          # flat, then a sharp step
-    assert _plateau_is_flat(lat[:3])              # the flat part is flat
-    assert not _plateau_is_flat(lat)              # including the step, it is not
-    assert _onset_capacity(wss, lat) == 4000.0    # onset = last size on the floor
+    lat = np.array([1.5, 1.5, 1.5, 9.0])  # flat, then a sharp step
+    assert _plateau_is_flat(lat[:3])  # the flat part is flat
+    assert not _plateau_is_flat(lat)  # including the step, it is not
+    assert _onset_capacity(wss, lat) == 4000.0  # onset = last size on the floor
 
 
 def test_penalty_sensitivity_monotonic_trend(three_level_curve):

@@ -1,0 +1,47 @@
+% ---------------------------------------------------------------------------
+% XeLaTeX header for Draft_Dissertation.pdf.  Used by scripts/build_pdf.sh.
+%
+% Depends only on packages present in the TeX Live "basic" scheme (pifont,
+% etoolbox), so the PDF builds on a stock installation with no tlmgr step.
+%
+% Three jobs:
+%   1. Supply the one glyph Latin Modern lacks -- U+2717 BALLOT X, used once, in
+%      Table 15's Match column. Declaring the character active and binding it to
+%      \ding{55} is what the newunicodechar package does internally; doing it
+%      directly avoids a dependency that the basic scheme does not ship, and is
+%      preferable to switching the whole document to a broad-coverage sans face
+%      for the sake of a single character.
+%   2. Set tables at \footnotesize and tighten the inter-column padding. Pandoc
+%      sizes each p{} column as (\linewidth - 2*ncols*\tabcolsep) * fraction, so
+%      padding is subtracted from the content width before the proportions are
+%      applied; at the default 6pt the nine-column machine table (Table 4) spends
+%      ~108pt of a ~452pt text block on gutters alone, which pushes its narrow
+%      cells past the margin.
+%   3. Loosen the line-breaking tolerance. The prose is dense with \texttt{} runs
+%      and inline maths, and the default badness threshold yields avoidable
+%      overfull lines.
+%
+% Verified: 0 overfull boxes, 0 missing characters.
+% ---------------------------------------------------------------------------
+
+\usepackage{pifont}
+
+\catcode`✗=\active
+\def✗{\ding{55}}
+
+% Latin Modern does carry the glyphs below, but declaring them costs nothing and
+% makes the build independent of which Latin Modern revision is installed.
+\newcommand{\aeminus}{\textminus}
+\newcommand{\aearrow}{\textrightarrow}
+
+\usepackage{etoolbox}
+\AtBeginEnvironment{longtable}{\footnotesize}
+\AtBeginEnvironment{tabular}{\footnotesize}
+\setlength{\tabcolsep}{3pt}
+
+\tolerance=2000
+\emergencystretch=3em
+
+% Allow breaks inside long monospaced identifiers (file names, CLI flags) so a
+% wide \texttt{} run cannot single-handedly push a line past the margin.
+\renewcommand{\texttt}[1]{{\ttfamily\hyphenchar\font=`\-\relax #1}}
