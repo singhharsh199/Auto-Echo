@@ -285,6 +285,137 @@ argument. **Do not give the solutions yet**, or the method section will be empty
 
 ---
 
+## Clarifications for Section `2:00`
+
+### What is `clflush`, and what does "evict a cache line" mean?
+
+`clflush` = **C**ache **L**ine **FLUSH** — an x86 instruction.
+
+**Novice.** A book sits on your desk (data in cache). `clflush` means *"put that book
+back on the distant shelf."* Next time you need it, you must walk all the way to the
+shelf — you cannot grab it from the desk.
+
+**Intermediate.** You give it an **address**; the CPU removes the **cache line**
+containing that address from **every cache level** — L1, L2, L3, across cores.
+
+```c
+_mm_clflush(ptr);     // in C
+clflush [rax]         // in assembly
+```
+
+A **cache line** is the smallest unit a cache stores — never a single byte:
+
+| Machine | Line size |
+|:---|:---:|
+| x86 (Intel/AMD) | **64 B** |
+| Apple Silicon | **128 B** |
+
+So "evict a cache line" = remove it from cache, forcing the next read to come from a
+lower level or DRAM.
+
+**Why anyone wants it.** To measure DRAM latency you need a *guarantee* the data is
+not cached:
+
+```c
+clflush(addr);           // remove from cache
+t0 = rdtscp();
+value = *addr;           // now this MUST come from DRAM
+t1 = rdtscp();           // → this is DRAM latency
+```
+
+Without a flush you cannot know where the data came from — L1, L3 or memory. **The
+reference paper's method depended on exactly this**, which is what tied it to x86.
+
+💡 **And this is where the WSS design wins.** It needs no flush at all: if the working
+set is *larger than the cache*, the data is evicted **by construction** — there is
+simply no room. Eviction comes from the geometry of the experiment, not from an
+instruction.
+
+### How does the hardware "actively hide the signal"?
+
+**"Actively" is the operative word.** This is not random noise — it is the CPU's
+*deliberate optimisation*. Making memory look fast is the CPU's job. Measuring how
+fast it really is, is yours. **The two goals are in direct conflict.**
+
+**Novice.** You want to time the walk to the shop, but a helpful friend keeps running
+ahead and fetching things before you ask. Your stopwatch reads ~0 every time, and you
+conclude the shop is next door. Wrong.
+
+**Two mechanisms matter here.**
+
+**(a) The prefetcher reads your pattern.**
+
+| Access pattern | What the prefetcher does | What you actually measure |
+|:---|:---|:---|
+| Sequential (0,1,2,3…) | Learns it, fetches ahead | **Prefetch bandwidth**, not latency |
+| Fixed stride (0,16,32…) | Detects the stride, fetches ahead | Wrong again |
+| **Random chase** | **Cannot predict at all** | ✅ **True latency** |
+
+If the prefetcher wins, latency looks **flat at every working-set size** — the
+staircase vanishes and you would conclude the machine has no cache hierarchy.
+
+**(b) Out-of-order execution overlaps accesses.**
+
+The CPU has a 300-plus-entry reorder buffer. Given *independent* loads it runs 10–20
+of them concurrently:
+
+```
+Independent loads:   [100ns]            ← 10 loads overlap
+                     [100ns]               total still ~100 ns
+                     [100ns]               → you measure "10 ns per access"
+                     ...
+
+Dependent chase:  [100ns] → [100ns] → [100ns] → ...
+                  ← strictly sequential; no overlap is possible
+                  → you measure the full 100 ns  ✅
+```
+
+This is why **MLP = 1** matters, and the pointer chase enforces it *in hardware*
+rather than by convention.
+
+### "ARM gives user space nothing equivalent" — stated precisely
+
+Be precise here, or an examiner will correct you.
+
+**❌ Wrong to say:** *"ARM has no cache-flush instruction."* It does:
+- `DC CIVAC` — **D**ata **C**ache **C**lean and **I**nvalidate by **V**irtual
+  **A**ddress to point of **C**oherency
+- `DC IVAC` — Invalidate by VA
+
+**✅ Correct:** the instruction **exists in the architecture, but whether user space
+may execute it is decided by the OS.**
+
+| Platform | Flush available to user space? | Mechanism |
+|:---|:---|:---|
+| **x86 (any OS)** | ✅ Always | `clflush` is unprivileged at the hardware level |
+| **ARM Linux** | ⚠️ Usually | Governed by the `SCTLR_EL1.UCI` bit; Linux generally enables it |
+| **ARM macOS** | ❌ Never | macOS does not expose data-cache maintenance to EL0 — it **traps** |
+
+**The portability argument in full:**
+
+```
+1. The method requires a flush
+2. Flush is:  always available on x86            ✅
+              usually available on ARM Linux      ⚠️
+              never available on Apple Silicon    ❌
+3. Therefore the method works on x86 and fails on Apple Silicon
+4. Therefore it is not portable
+```
+
+💎 **Why this mattered more than convenience.** It determined the whole design. §2.4
+states it directly: *"This is why the WSS formulation is not merely a convenient
+alternative to the reference method but **the only one of the two that can be made
+portable at all**."*
+
+**And it links back to Barrier 1** — the answer to the Section 2 check question:
+
+> The pointer chase defeats the prefetcher **and** removes the need for a flush.
+> **One solution, two barriers.** That is not a coincidence: the property that makes
+> the chase unpredictable — a working set larger than the cache — is the same property
+> that forces eviction automatically.
+
+---
+
 ## `4:00` — The failure
 
 > "My first implementation was a portable approximation of the reference paper's
