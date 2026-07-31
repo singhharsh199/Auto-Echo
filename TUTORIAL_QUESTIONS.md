@@ -2457,49 +2457,584 @@ that is one run on a quiet machine." How do you respond, and what does
 **3.1** Compute the TLB reach of a 96-entry L1 DTLB under 4 KiB pages and under
 2 MiB pages. Use the result to explain why the Intel L3 was invisible at 4 KiB.
 
+> **Answer.** **TLB reach** = entries × page size — the total address range the
+> first-level data TLB can translate without a page-table walk.
+>
+> | Page size | Reach | vs the 20 MiB L3 |
+> |:---|---:|:---|
+> | 4 KiB | 96 × 4 KiB = **384 KiB** | **53× too small** |
+> | 2 MiB | 96 × 2 MiB = **192 MiB** | **9.6× larger** |
+>
+> The ratio is **512×** — exactly the page-size ratio, since the entry count is fixed.
+>
+> **Why the L3 was invisible.** To observe a 20 MiB L3 you must place a working set of
+> ~20 MiB and still be able to *reach* it. On 4 KiB pages, 20 MiB spans **5,120
+> pages** against 96 first-level entries — a 53-fold over-subscription. Long before
+> the working set approaches the L3's capacity, every dependent load is missing in the
+> TLB and paying a page walk. Measured on the machine: past ~1.3 MiB the curve climbs
+> steeply and **saturates at a flat ~143 ns plateau by ~4–5 MiB**, then stays there to
+> 64 MiB. The curve reaches DRAM+page-walk latency *before the L3 boundary is ever
+> sampled*, so there is no L3 step left to detect.
+>
+> Under 2 MiB pages the same 20 MiB working set spans **10 pages**. It sits entirely
+> within first-level TLB reach, translation cost vanishes from the measurement, and
+> the L3 resolves at **19.7 MiB, −1.5 % of nominal**, with a 20.81 ns plateau.
+>
+> **The framing:** *"The L3 was never hidden by the cache hierarchy. It was hidden by
+> the **translation** hierarchy — a second, independent structure the sweep must also
+> stay inside. Page size, not cache size, decided whether a cache was visible."*
+>
+> **Caveat to volunteer before it is asked:** 96 entries is the figure for this core
+> class and is used as an order-of-magnitude anchor, not a datasheet quotation. The
+> argument is insensitive to the exact number — even a 128-entry DTLB gives 512 KiB of
+> 4 KiB reach, still 40× short of the L3. Intel does not publish full TLB geometry for
+> this SKU, which is itself an instance of the incomplete-table problem of §1.
+
 **3.2** Explain the causal chain from "working set exceeds TLB reach" to "the
 latency curve saturates before the L3 boundary". Why does a page-table walk cost
 so much more than a cache miss?
+
+> **Answer.** The chain has five links, and the fifth is the one that produces
+> *saturation* rather than a mere slowdown:
+>
+> 1. **Randomised access defeats TLB locality.** The Hamiltonian chase touches pages
+>    in random order, so once the working set exceeds TLB reach there is no reuse to
+>    exploit — nearly every hop lands on a page whose translation has been evicted.
+> 2. **Every miss triggers a page-table walk.** x86-64 uses a **four-level** radix
+>    page table, so resolving one virtual address requires up to **four dependent
+>    memory accesses** before the data access can even be issued.
+> 3. **Those walk accesses miss too.** With a 20 MiB working set the page tables
+>    themselves are large and randomly accessed, so the walk's own loads miss the
+>    caches and go to DRAM.
+> 4. **Cost per hop becomes translation-dominated.** One logical load now costs up to
+>    four DRAM accesses for the walk plus one for the data — so the measured latency is
+>    a *translation* measurement wearing a *data* measurement's clothes.
+> 5. **The curve saturates.** This is the decisive step. Once every access pays the
+>    full walk, the cost stops depending on working-set size — it is already at the
+>    ceiling. The curve goes **flat at ~143 ns and stays flat to 64 MiB**. A flat curve
+>    has no knee, and the inference layer cannot localise a boundary that produces no
+>    step.
+>
+> **Why a walk costs more than a cache miss.** A cache miss is **one** access to the
+> next level. A page-table walk is a **serial chain** of up to four dependent
+> accesses, each of which can itself miss — and only after all four completes can the
+> data access begin.
+>
+> | | Accesses | Serialised? | Rough cost |
+> |:---|:---:|:---|---:|
+> | L3 hit | 1 | — | ~21 ns |
+> | DRAM miss | 1 | — | ~122 ns |
+> | Page-walk + data | up to 5 | **yes — dependent chain** | ~143 ns |
+>
+> The dependency is the multiplier: you cannot overlap the levels of a radix walk any
+> more than you can overlap the hops of a pointer chase (Q1.4 in Part 2) — for exactly
+> the same reason, since a page-table walk *is* a pointer chase.
+>
+> **The examiner's likely follow-up — "doesn't the page-walk cache help?"** Yes, and
+> it is why the saturated plateau is ~143 ns rather than the ~500 ns four-full-DRAM-
+> accesses worst case. Intel caches upper-level page-table entries, so most walks are
+> shortened. The point stands: shortened is not eliminated, and the residual cost is
+> both large and **size-independent**, which is what flattens the curve.
 
 **3.3** The 4 KiB Intel run reported a knee at ~3.5 MiB. The dissertation calls
 this a *TLB-transition artefact, not a cache*. What evidence distinguishes an
 artefact from a real cache boundary here?
 
+> **Answer.** Four independent lines of evidence, and the fourth is decisive because
+> it is a **controlled intervention** rather than an observation.
+>
+> **1. The plateau latency is wrong for a cache.** The band beyond ~3.5 MiB sits at
+> **~143 ns**. A Raptor Lake L3 hit costs **~21 ns** (measured: 20.81 ns under huge
+> pages). A structure whose "hit" latency is ~7× its own last-level cache and
+> essentially equal to DRAM (~122 ns) is **not a cache** — the whole purpose of a
+> cache is to be faster than what it fronts. This alone should end the argument.
+>
+> **2. The position is wrong by a factor of 5.7.** ~3.5 MiB against a documented
+> 20 MiB — far outside the factor-of-two matching tolerance of §5.5, so the validation
+> layer scores it as a **miss**: recall falls to 2/3.
+>
+> **3. The curve never leaves the plateau.** It stays flat from ~4–5 MiB all the way
+> to **64 MiB**. A real L3 boundary at 3.5 MiB would be followed by a *further* step
+> into DRAM. There is no such step, because the curve is already at DRAM+walk cost.
+> One "cache" with no memory behind it is not a hierarchy.
+>
+> **4. The controlled experiment removes it.** This is the strongest evidence and the
+> one to lead with under pressure. Change **one variable** — the page size — and:
+>
+> | | 4 KiB pages | 2 MiB huge pages |
+> |:---|:---|:---|
+> | Knee reported | ~3.5 MiB | **19.7 MiB** |
+> | Plateau latency | ~143 ns | **20.81 ns** |
+> | Caches matched | 2/3 | **3/3** |
+> | Level count across sweeps | unstable, estimators 2–5 | stable at 4 (std 0.00) |
+> | Silhouette | 0.885 | **0.933** |
+>
+> Nothing about the *cache* hierarchy changed between those two columns — same
+> silicon, same code path, same sweep. Only the **translation** path changed. An
+> artefact that disappears when you remove the mechanism you claim causes it, and is
+> replaced by a feature matching documented hardware to −1.5 %, is diagnosed, not
+> guessed at.
+>
+> **5. Instability, as a supporting signal.** Across sweeps the estimators ranged
+> **2–5** levels on 4 KiB pages against a unanimous 4 under huge pages. Real structure
+> is reproducible; an artefact sitting on a steep, noisy transition is not.
+>
+> **The phrasing:** *"I did not infer the artefact from its shape — I falsified it. I
+> predicted that if the mechanism is TLB reach then enlarging the page should make the
+> feature vanish and the real L3 appear. That is exactly what happened, to within
+> −1.5 % of the documented capacity."*
+
 **3.4** macOS on Apple Silicon uses 16 KiB base pages against x86's 4 KiB. Derive
 the consequence for the number of pages touched by a 16 MiB working set, and
 explain why this confounds the M1-versus-Intel comparison.
+
+> **Answer.**
+>
+> **The derivation.**
+>
+> | Machine | Base page | Pages spanned by a 16 MiB working set | First-level TLB reach (~96 entries) |
+> |:---|---:|---:|---:|
+> | Apple M1 | 16 KiB | 16 MiB ÷ 16 KiB = **1,024** | ~1.5 MiB |
+> | Intel i5 | 4 KiB | 16 MiB ÷ 4 KiB = **4,096** | ~384 KiB |
+>
+> The M1 touches **4× fewer pages** for the identical working set, so at any given
+> size it is under **four times less** translation pressure. Confirmed at run time:
+> `sysctl hw.pagesize` reports 16384 on the M1; the Windows x86-64 default is 4096.
+>
+> **Why this confounds the comparison.** §5.2 and §5.3 differ in the headline result —
+> the M1 gives a clean three-level curve on default pages while the Intel part needs a
+> huge-page control to resolve its L3 — and there are **two candidate explanations**
+> that the experiment cannot separate:
+>
+> 1. **Architecture** — Apple's memory subsystem genuinely handles deep random access
+>    better.
+> 2. **Page size** — the M1 simply had 4× the translation headroom for free.
+>
+> These are **confounded**, because the two variables move together and neither can be
+> held fixed: the page size is a property of the OS/ISA pair, not a knob. Any claim of
+> the form "the M1's memory system is better at this" is therefore **unsupported** by
+> these two runs, because a 4× page-size advantage is sitting in the same direction.
+>
+> **What the dissertation actually claims, and why it is defensible.** It reports page
+> size in Table 4 as a **hardware parameter of the same standing as the line size**,
+> and states in §5.4 that the quantitative attribution — how much of the M1's cleaner
+> deep curve is the larger page and how much the architecture — **remains beyond
+> reach**, because settling it would need the TLB geometry of both parts, which is
+> documented for neither at the required level of detail.
+>
+> **The examiner's trap, and the escape.** If asked *"so is the M1 better?"* the wrong
+> answers are "yes" (unsupported) and "I don't know" (evasive). The right answer names
+> the confound and the missing instrument:
+>
+> > *"I can't separate those two effects with the experiment I have, and I say so in
+> > §5.4. The clean way to separate them would be to run the Intel machine at 4 KiB
+> > and at 2 MiB — which I did — and the M1 at 16 KiB and at a larger page, which
+> > macOS does not permit (Q3.5). So the control exists on one platform and is
+> > unavailable on the other, and I report the asymmetry rather than assuming it away."*
+>
+> Note that the huge-page experiment (§5.3) is *precisely* the manipulation that
+> demonstrates page size matters — so the confound is not speculative. It is measured,
+> on the platform where measuring it was possible.
 
 **3.5** Why can the huge-page control not be applied to Apple Silicon? Name the
 specific API, the specific failure, and explain why this is reported as a
 *finding* rather than as unfinished work.
 
+> **Answer.**
+>
+> **The API and the failure.** macOS exposes large pages through `mmap` with the
+> `VM_FLAGS_SUPERPAGE_SIZE_2MB` flag. Both that flag **and** the permissive
+> `VM_FLAGS_SUPERPAGE_SIZE_ANY` fail with **`EINVAL`** on this machine. Superpages are
+> an **Intel-era macOS facility that arm64 does not honour**, and no equivalent
+> unprivileged large-page API replaces them. The probe therefore falls back to the
+> 16 KiB base page, and the `--huge-pages` path is a no-op on Apple Silicon.
+>
+> Contrast the Windows path, which does work: `VirtualAlloc(MEM_LARGE_PAGES)`, gated
+> on acquiring `SeLockMemoryPrivilege`, with a graceful fallback to 4 KiB when the OS
+> withholds it. The provenance is then recorded from a **post-hoc check of what was
+> actually granted**, not from what was requested — so a silent downgrade cannot be
+> reported as a huge-page result.
+>
+> **Why this is a finding, not a gap.** Three reasons, in ascending strength:
+>
+> 1. **It is not closable by effort.** This is the distinction the question is
+>    probing. An unfinished item is one where more work would produce the result. Here
+>    the facility **does not exist on the platform** — it is not an unimplemented code
+>    path, a missing privilege, or a bug. No amount of engineering opens it from user
+>    space.
+> 2. **It is the same class of obstacle the project is about.** ARM64 gives user space
+>    no cache-flush instruction (§2.4) *and* no page-size control. In **both** cases
+>    the method had to be designed around the **absence** of a primitive rather than
+>    its presence. That is not an inconvenience the project worked around — it is the
+>    project's subject matter, observed twice on the same platform.
+> 3. **It bounds the claim precisely.** Because the control is available on x86 and
+>    not on ARM64, the dissertation can say exactly what it knows: page size decides
+>    L3 visibility **on the platform where that could be tested**, and the M1/Intel
+>    difference remains confounded by page size **on the platform where it could not**
+>    (Q3.4). Reporting the asymmetry is what keeps the cross-platform claim honest.
+>
+> **The phrasing:** *"The asymmetry is not an implementation gap that more effort
+> would close; it is a difference in what the two platforms permit an unprivileged
+> tool to do — which is exactly the kind of difference that motivated the project's
+> design in the first place."*
+
 **3.6** Explain why a *shared* L3 measures smaller than its nominal capacity from
 a single probing core. Why does this not affect the L1 and L2 measurements?
+
+> **Answer.** Because a shared cache's capacity is a **resource allocated among
+> competitors**, and the probe can only ever map **its own share**.
+>
+> **The mechanism.** Raptor Lake's 20 MiB L3 is shared by all cores over a ring
+> interconnect. While the probe walks its chase buffer, every other active core is
+> also allocating lines in that same L3, evicting the probe's lines. The probe's
+> plateau therefore ends when *its resident share* is exhausted — not when the
+> physical cache is full. What the knee locates is the **effective capacity available
+> to one core under the prevailing load**, which is a property of the *running system*.
+>
+> **The measured range.** This is not a theoretical concern; §5.3.2 quantifies it by
+> manipulating the load directly:
+>
+> | Condition | Detected L3 | vs 20 MiB nominal |
+> |:---|---:|---:|
+> | Quiet (`intel_ci`, 10 sweeps) | **19.7 MiB** | −1.5 % |
+> | 8 × 32 MiB streaming workers | **3.5 MiB** | **−83 %** |
+>
+> A **5.6-fold** swing on identical silicon, with zero within-condition spread.
+>
+> **Why L1 and L2 are immune.** They are **private per core**. On this SKU each
+> performance core has its own 48 KiB L1d and its own 1.25 MiB L2, so no other core
+> can allocate into them or evict from them. The eight workers were pinned to logical
+> CPUs 2–9 — physical cores 1–4 — leaving the probe's own physical core (`P#0`+`P#1`)
+> **entirely idle**, so not even an SMT sibling shared its private levels. The
+> measurement confirms the reasoning: under load the L1 and L2 **capacities** did not
+> move, only their latencies (a clock effect — Q3.7).
+>
+> | | Shared? | Capacity under load |
+> |:---|:---|:---|
+> | L1d (48 KiB) | private per core | **unchanged** |
+> | L2 (1.25 MiB) | private per core | **unchanged** |
+> | L3 (20 MiB) | **shared, all cores** | 19.7 → **3.5 MiB** |
+>
+> **The conceptual point to land:** *"For a private cache, capacity is a property of
+> the die. For a shared cache, it is a property of the running system — and a
+> descriptor can only ever report the former. That gap is not a limitation of my
+> probe; it is a limitation of what a table can mean, and it is the third lens's whole
+> argument (§1, §5.4)."*
 
 **3.7** Under an eight-worker load the detected L3 fell from 19.7 MiB to 3.5 MiB,
 and *every* latency rose by ~2.2×. Explain why the capacity conclusion survives
 the second effect, and state the property that makes the argument work.
 
+> **Answer.** The property is that **a knee is a working-set size, and working-set
+> sizes are frequency-invariant.**
+>
+> **The threat.** If everything got slower under load, a sceptic can say the "smaller
+> L3" is just the curve being shifted around by whatever slowed the machine down — a
+> confound, not a capacity result.
+>
+> **Why it fails.** The two effects live on **different axes**:
+>
+> | | Axis | Under load |
+> |:---|:---|:---|
+> | Latency | *y* (nanoseconds) | uniform ×2.2 |
+> | **Detected capacity** | ***x*** **(bytes)** | 19.7 → 3.5 MiB |
+>
+> A uniform multiplier on the *y*-axis rescales every point by the same factor. On the
+> log–log axes the analysis uses, that is a **rigid vertical translation** — it moves
+> the whole curve up and changes no *x*-coordinate. **A multiplicative shift in
+> latency cannot move the size at which a plateau ends.** The knee is where the curve
+> *stops being flat*, and flatness is preserved under scaling.
+>
+> **The decisive evidence that the 2.2× is not a cache effect.** The multiplier is
+> **already present at a 256 B working set** — a size at which the entire buffer fits
+> in L1 and the shared L3 **cannot be implicated at all**. A cache-contention
+> explanation cannot produce a slowdown at 256 B. A **clock** explanation can, and
+> does, because it scales everything uniformly regardless of size.
+>
+> So the two effects are not merely separable in principle — they are separated by an
+> observation:
+>
+> - **Size-independent** uniform scaling → a clock effect → moves *y* only.
+> - **Size-dependent** change in where the plateau ends → a capacity effect → moves *x*.
+>
+> **The one-line answer:** *"The uniform 2.2× is on the latency axis; the 5.6-fold
+> capacity collapse is on the working-set axis. A frequency change rescales the first
+> and cannot touch the second — and I can prove the 2.2× is frequency-like because it
+> is already there at 256 bytes, where the L3 is not involved."*
+
 **3.8** The dissertation attributes that uniform 2.2× rise to DVFS but declines to
 claim the magnitude is accounted for. Why? What does this SKU's turbo range imply,
 and what instrument would settle it?
 
+> **Answer.** Because the arithmetic **does not quite close**, and the dissertation
+> says so rather than rounding the discrepancy away.
+>
+> **The attribution, and why it is reasonable.** A uniform, size-independent scaling is
+> the signature of a **clock** effect, and the obvious mechanism is the loss of
+> single-core turbo once every other core is busy — a machine with eight streaming
+> workers cannot hold a one-core boost.
+>
+> **Where it stops closing.**
+>
+> | | Value |
+> |:---|---:|
+> | Single-core turbo | 4.6 GHz |
+> | P-core base | 2.4 GHz |
+> | **Maximum ratio from core frequency alone** | **~1.9×** |
+> | **Observed uniform rise** | **~2.2×** |
+>
+> A 2.2× rise **exceeds** the 1.9× that the full turbo-to-base drop can supply. So the
+> observation implies **either** operation *below* base frequency (thermal or
+> power-limit throttling under an eight-core streaming load, which is plausible) **or**
+> an additional **uncore/ring** component — the interconnect and L3 slices have their
+> own clock domain, and saturating the ring with eight streamers plausibly slows it
+> independently of the cores. Possibly both. The data cannot distinguish them.
+>
+> **Why the framework cannot settle it — and this is the elegant part.** The runtime
+> calibration measures the **invariant TSC** (§3.1.1), whose rate is *by construction*
+> decoupled from the core clock. That decoupling is exactly what makes it a valid
+> timebase (Q1.13) — and it is exactly what makes it **useless as a tachometer**. The
+> instrument that makes the measurement trustworthy is the same instrument that cannot
+> observe the effect. That is a genuine design trade-off, not an oversight.
+>
+> **The instrument that would settle it:** the `APERF`/`MPERF` MSR pair, whose ratio
+> gives the *actual* delivered core frequency over an interval, or an equivalent OS
+> performance counter. Both are **privileged** — which puts them outside the project's
+> no-privileges constraint — so it is recorded as future work (§6).
+>
+> **The supportable statement, verbatim:** *"The offset is uniform and clock-like. Its
+> magnitude is not accounted for."* That is the whole claim, and it is deliberately
+> narrower than "it is DVFS".
+>
+> **Why saying less is worth more here.** Claiming DVFS fully explains 2.2× would be
+> checkable against the published turbo range and would fail — an examiner who knows
+> the SKU would catch it in seconds. Stating that the residual is unexplained, naming
+> two candidate mechanisms, identifying the exact instrument that would discriminate
+> them, and explaining why that instrument is out of scope, demonstrates command of
+> the measurement rather than a willingness to over-fit a story to it. **And it costs
+> nothing**, because the capacity conclusion never depended on the magnitude (Q3.7).
+
 **3.9** *"The probe pins itself to a single core on all three platforms, so core
 migration cannot affect the measurements."* Evaluate this statement with
 reference to `pin_and_boost()`.
+
+> **Answer.** **False on the macOS path, and the distinction is precisely the kind an
+> examiner is testing for.** Two of the three platforms *pin*; the third only *hints*.
+>
+> ```c
+> static void pin_and_boost(void) {
+> #if defined(__APPLE__) && defined(__aarch64__)
+>     pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);   /* a HINT */
+> #elif defined(__linux__)
+>     cpu_set_t set; CPU_ZERO(&set); CPU_SET(0, &set);
+>     sched_setaffinity(0, sizeof(set), &set);                        /* binding */
+> #elif defined(_WIN32)
+>     SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1);        /* binding */
+> #endif
+> }
+> ```
+>
+> | Platform | Mechanism | Guarantee |
+> |:---|:---|:---|
+> | Linux | `sched_setaffinity` to CPU 0 | **hard** — the scheduler may not place it elsewhere |
+> | Windows | `SetThreadAffinityMask(…, 1)` | **hard** |
+> | **macOS/arm64** | `QOS_CLASS_USER_INTERACTIVE` | **none** — a *scheduling-class hint* |
+>
+> **Why macOS is different, and why the hint is nonetheless correct.** macOS
+> deliberately exposes **no public thread-affinity API** on Apple Silicon; the
+> scheduler owns core placement. `QOS_CLASS_USER_INTERACTIVE` biases the thread onto
+> the **performance cluster** (Firestorm: 128 KB L1d, 12 MB L2) rather than the
+> efficiency cluster, but it cannot bind it to a specific core, and the OS may migrate
+> the thread at any time.
+>
+> Note also the **opposite core numbering** (§5.1): on Intel, logical CPU 0 is a
+> *performance* core, so affinity mask 1 is correct; on the M1, CPUs 0–3 are
+> *efficiency* cores, so the same strategy would have selected the wrong cluster
+> entirely. The two platforms need different mechanisms for a substantive reason, not
+> merely an API-availability one.
+>
+> **Two independent checks prove the bias took effect** — and the second is the one to
+> lead with, because it is a *measurement*, not an argument:
+>
+> 1. **`hwloc` confirms the geometry differs between clusters:** the M1's performance
+>    cluster carries a 128 KiB L1d and a 12 MiB L2, against 64 KiB and 4 MiB on the
+>    efficiency cluster. So the two clusters are distinguishable by measurement at all.
+> 2. **The recovered capacities identify the cluster.** They sit at **+23.0 % and
+>    +16.1 %** against the *performance*-core figures. Had the probe actually run on
+>    the efficiency cluster, the identical measurements would read **+146 % and
+>    +248 %** against that cluster's 64 KiB and 4 MiB — far outside the factor-of-two
+>    tolerance, and §5.2 would report a **failure rather than a match**. The result is
+>    therefore self-certifying: it could not have come out this way from the wrong
+>    cluster.
+>
+> **What limits the residual risk — migration *within* the performance cluster:**
+> all four Firestorm cores have **identical L1d and share one L2**, so a migration
+> between P-cores lands on the same cache geometry. Minimum-over-five-repeats then
+> discards any window a migration disturbed, since a migration costs time. All three
+> M1 sweeps agree on three levels with L1 at 157.5 KiB in every one — a thread
+> bouncing between *clusters* would produce visible bimodality, since 128 KiB against
+> 64 KiB is a factor of two.
+>
+> **The answer to give:** *"The claim is true on Linux and Windows and false on macOS,
+> where no affinity API exists and the QoS class is a hint. I state that as a
+> limitation rather than claiming pinning I do not have — and I rely instead on the
+> P-cluster's uniform cache geometry, the minimum-over-repeats statistic, and the
+> observed cross-sweep stability. If Apple exposed affinity I would use it."*
 
 **3.10** The headline Intel L3 was corrected from 13.9 MiB to 19.7 MiB. Explain
 the aggregation error that caused the original figure, and state the general
 principle about which statistic is appropriate for a *latency* versus a
 *boundary*.
 
+> **Answer.** The error was **detecting on an aggregate that had already been reduced
+> by the wrong statistic.**
+>
+> **What happened.** The pipeline's `wss_curve.csv` is the **minimum over sweeps** at
+> each working-set size. The original figure came from running level detection **once,
+> on that aggregated curve**. The corrected figure comes from detecting in **each sweep
+> independently** and taking the **median of the per-sweep capacities**
+> (`scripts/capacity_ci.py`).
+>
+> | Method | Intel L3 | Error vs 20 MiB |
+> |:---|---:|---:|
+> | Detect once on the min-over-sweeps aggregate | 13.9 MiB | **−30.4 %** |
+> | **Median of per-sweep detections** | **19.7 MiB** | **−1.5 %** |
+>
+> And the per-sweep evidence is decisive: **9 of the 10 individual sweeps place the L3
+> at 19.7 MiB**; exactly one places it at 13.9 MiB. The original headline was therefore
+> reporting the **minority outcome** — an artefact of the aggregation, not a property
+> of the cache.
+>
+> **The mechanism.** In the noisy L3→DRAM transition, taking a per-size minimum
+> systematically favours whichever sweep happened to be fastest at that size. On the
+> fast side of the knee that is harmless; but near the transition the lower envelope
+> selects the *faster*, i.e. **still-cached-looking**, observations further and further
+> right, which drags the apparent end of the plateau **inward**. A lower envelope
+> applied to a *boundary* biases it systematically, in one direction.
+>
+> **The general principle — the sentence to memorise:**
+>
+> > The minimum is the **right** statistic for a **latency** and the **wrong**
+> > statistic for a **boundary**.
+>
+> For a latency, interference is one-sided — it can only *add* time — so the minimum is
+> the best estimator of the hardware floor (Q1.12). But a **boundary is a location, not
+> a magnitude**, and there is no argument that noise displaces a knee in only one
+> direction. Applying a floor-estimator to a location imports a bias with no
+> justification behind it.
+>
+> **Why this is an asset in the viva rather than an embarrassment.** Volunteer it:
+> *"An earlier draft reported −30.4 % here, and that figure was substantially an
+> artefact of my own aggregation rather than a property of the cache. I found it by
+> asking why one number disagreed with the per-sweep spread, and the correction is in
+> §5.3 with the mechanism explained."* Finding an error in your own favour, and
+> documenting it, is stronger evidence of rigour than never having made one. It also
+> demonstrates that the estimator was **interrogated**, not merely applied.
+
 **3.11** Distinguish the two competing biases on a detected capacity: the
 soft-knee bias and the contention bias. Which caches does each affect, in which
 direction, and why is the *sign* of the total not fixed?
 
+> **Answer.** Two biases, **opposite in sign**, acting on **different populations** of
+> cache.
+>
+> | | Soft-knee bias | Contention bias |
+> |:---|:---|:---|
+> | **Cause** | partial residency past nominal capacity + min-over-repeats + median smoothing | other cores evicting the probe's lines |
+> | **Direction** | **upward** (over-read) | **downward** (under-read) |
+> | **Affects** | **every** cache — it is intrinsic to the method | **shared** caches only |
+> | **Magnitude observed** | +23.0 % (M1 L1), +16.1 % (M1 L2+SLC), +16.0 % (Intel L1) | −1.5 % quiet → **−83 %** loaded (Intel L3) |
+> | **Property of** | the *estimator* | the *running system* |
+>
+> **Why the sign of the total is not fixed.** For a **private** cache only the first
+> acts, so the bias is **one-signed upward** — which is why *every* detected capacity
+> on the M1 over-reads rather than scattering, and why the L1 sits at +23.0 % rather
+> than ±23 %. That consistency is itself evidence the bias is systematic, not noise.
+>
+> For a **shared** cache both act, in opposition, and their relative magnitudes depend
+> on load:
+>
+> - **Quiet machine:** contention is small, so the two nearly cancel. The Intel L3
+>   reads **−1.5 %** — and part of why it looks so accurate is that an upward
+>   estimator bias is offsetting a small downward contention pull. *The accuracy is
+>   partly a coincidence of cancellation, and saying so is more honest than claiming
+>   −1.5 % as pure precision.*
+> - **Loaded machine:** contention dominates overwhelmingly. The same L3 reads
+>   **−83 %**.
+>
+> So on a shared cache the total bias can be **positive, negative, or near zero**
+> depending on a variable — ambient load — that the probe does not control and cannot
+> observe.
+>
+> **The consequence for what may be claimed.** This is why the dissertation's claim is
+> *"a detected boundary within one octave"* rather than a tight percentage, and why the
+> L3 result is reported **with its provenance** (quiet machine, huge pages) rather than
+> as a property of the part. A number whose sign depends on the state of the rest of
+> the system is not a constant of the hardware.
+>
+> **The framing:** *"I have one bias I cannot remove and one I cannot control. For
+> private caches only the first applies and it is one-signed, so the direction is
+> predictable. For shared caches they oppose each other, and which wins is decided by
+> the machine's load — which is exactly why I report the load condition alongside the
+> capacity."*
+
 **3.12** Why does a random-access pointer chase produce a *soft* knee rather than
 a sharp step at the nominal capacity? Use the residency argument with real
 numbers from the M1 L1.
+
+> **Answer.** Because at a working set moderately larger than the cache, **most
+> accesses still hit** — so the average latency rises *gradually*, not in a step.
+>
+> **The residency arithmetic on the M1 L1.** Nominal capacity 128 KiB; the detected
+> boundary sits at **157.5 KiB**. Consider a 157.5 KiB working set walked in random
+> Hamiltonian order:
+>
+> $$\text{steady-state residency} \;\approx\; \frac{128}{157.5} \;=\; \mathbf{81\%}$$
+>
+> Roughly **four accesses in five still hit L1**. The mean per-hop latency is therefore
+> a *blend*:
+>
+> $$0.81 \times 1.53\,\text{ns} \;+\; 0.19 \times 9.19\,\text{ns} \;\approx\; 2.99\,\text{ns}$$
+>
+> — still far nearer the L1 plateau than the L2 plateau. The curve at 157.5 KiB is
+> **only just leaving flatness**, which is exactly why a plateau-edge estimator places
+> the boundary there rather than at 128 KiB.
+>
+> **Why randomness is the cause.** A *sequential* scan of a 157.5 KiB buffer would
+> evict in strict order and every line would be gone before reuse — a sharp
+> transition. Random order means a line's chance of surviving until its next visit
+> degrades **smoothly** with working-set size. But sequential access would also let
+> the prefetcher run ahead and erase the staircase entirely (Q1.2), so **the soft knee
+> is the price of the randomisation that makes the measurement possible at all.** It
+> is a designed-in trade, not an accident.
+>
+> **Three compounding factors, all pushing the same way:**
+> 1. **Partial residency** — the dominant term, above.
+> 2. **Minimum over five repeats** — favours the fast tail of each window (Q1.12).
+> 3. **Light median smoothing** — further suppresses the first upward excursions.
+>
+> All three favour the *fast* side, so the detected plateau extends a few grid points
+> past true capacity and the bias is **one-signed upward** for private caches.
+>
+> **The proof that this diagnosis is correct — and it is a strong one.** §5.4
+> implements an **onset** estimator (first departure from the plateau median) as an
+> alternative to the plateau **edge**. On the M1 L1 the onset estimator returns
+> **+0.0 % — exactly the nominal 128 KiB.** That confirms two things at once: the
+> physical knee really does sit at the documented capacity, and the +23 % is a genuine
+> **soft-knee artefact of the edge estimator**, not a mis-measurement of the hardware.
+>
+> **So why is `edge` still the default?** Because onset is *exact* on that one level
+> and **unreliable everywhere else** — from a tolerable −8.1 % on the Intel L2 to
+> catastrophic under-reads of **−71.0 %, −77.0 % and −96.9 %** on three of the other
+> four levels. On a sloping plateau (the M1's merged L2+SLC band, or a contended L3) it
+> fires almost immediately and collapses the capacity. That is an explicit
+> **accuracy-versus-robustness trade-off**, decided in favour of robustness and
+> documented rather than hidden.
+>
+> **The framing:** *"The +23 % is not error, it is a known, one-signed, well-understood
+> property of a plateau-edge estimator on a random-access curve. I can prove it,
+> because the onset estimator recovers 128 KiB exactly — and I can tell you precisely
+> why I did not adopt onset as the default."*
 
 ---
 
