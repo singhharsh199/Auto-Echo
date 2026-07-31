@@ -100,6 +100,58 @@ modules. Each is more accurate than measurement on the hardware it covers, and e
 fails in the same way: it presupposes that the hierarchy has already been described
 somewhere (§2.2).
 
+**Three lenses on the same silicon.** The two machines evaluated in §5 make that
+presupposition concrete, because each can be described three times over by three
+sources operating at different levels of privilege — and the three do not agree.
+
+| | Lens | What it reads | What it answers |
+|:--|:-----|:--------------|:----------------|
+| 1 | **Commercial** | Windows System Properties; macOS System Information | *What did I buy?* |
+| 2 | **Software** | `lstopo`/`hwloc` [27] over the OS cache descriptors | *What has the OS been told?* |
+| 3 | **Physical** | Auto-Echo — latency alone, from user space | *How does this silicon behave?* |
+
+The **commercial** lens is the one most users ever consult, and on both machines it
+reports the processor, its core count and its installed memory — and **not one figure
+about the cache hierarchy**. Anyone who needs to know the size of L1 has already been
+forced to a second tool.
+
+The **software** lens is that second tool, and on hardware whose vendor has filled in
+the table it is excellent: on the Intel Core i5-13450HX, `lstopo` reports a complete
+and correct hierarchy — 48 KB L1d and 1280 KB L2 per performance core, a 20 MB shared
+L3 — which independent measurement then confirms. Nothing in this dissertation
+disputes that, and any argument for measurement that rests on `lstopo` being
+*inaccurate* would be false. Its limitation is narrower and more interesting: its
+chain of trust terminates at what the operating system was told, so it inherits the
+firmware's omissions exactly.
+
+That limitation bites in **two distinct ways**, and this project exists because of
+both:
+
+1. **The table is incomplete.** On the Apple M1, `lstopo` reports the 128 KB L1d and
+   the 12 MB L2 and then stops. The ~8 MiB System-Level Cache is simply absent — not
+   misreported, *absent* — because Apple does not export it through any interface
+   `hwloc` can read. §5.2 shows the probe responding to capacity well beyond the
+   documented 12 MB L2, resolving the L2 and the SLC as a single 13.9 MiB band. What
+   was never written down cannot be looked up; it can only be measured.
+
+2. **The table is complete but topology is not behaviour.** On the Intel machine
+   `lstopo`'s 20 MB L3 is entirely correct as a statement about the *silicon* — and
+   under the default 4 KiB pages that L3 is nonetheless **behaviourally
+   unreachable**. Past ~1.3 MiB the measured curve climbs and saturates at a flat
+   ~143 ns plateau by ~4–5 MiB, because once the working set outruns the TLB's reach
+   every dependent load triggers a page-table walk that itself misses to DRAM. The
+   cache is there; the machine cannot get to it before translation cost dominates.
+   A 2 MiB huge-page allocation lifts the masking and the same code path then
+   recovers the L3 at 19.7 MiB, within −1.5 % of nominal (§5.3).
+
+The second case is the sharper of the two, because no descriptor is wrong in it.
+A table can only report what a cache *is*; it cannot report what a workload can
+*use*, and the gap between those two is a property of the running system — page
+size, TLB reach, and, as §5.3.2 shows under load, how much of a shared cache the
+other cores have left. Measurement is not offered here as a more accurate substitute
+for the descriptor. It answers a **different question**, and the three lenses are
+three different claims rather than three attempts at one.
+
 **Motivation.** An architecture-agnostic tool that maps a memory hierarchy from
 empirical measurement alone — no privileges, no per-architecture instructions —
 would support performance tuning, portable auto-tuning of cache-blocked
@@ -545,6 +597,11 @@ On Apple Silicon the exact rational from `mach_timebase_info` (125/3 ~ 41.667 ns
 is used directly; an independent calibration run reproduced this value to four
 significant figures, confirming the mechanism relied upon by the x86/Windows
 paths.
+The Intel machine supplies a quantitative counterexample to the alternative. Its
+advertised base frequency is 2.40 GHz, whereas calibration measures the invariant
+TSC at 2.61 GHz; deriving nanoseconds from the advertised figure would inflate every
+reported latency by 8.8 % while leaving capacities untouched, producing an error
+confined to the one column no internal check could detect. §5.1 gives the numbers.
 
 ### 3.2 Level Discovery: Count, then Localise (`src/autoecho/analysis.py`)
 A cache of capacity $C$ keeps latency flat while the working set fits ($S \leq C$)
@@ -614,8 +671,8 @@ sweeps on two machines, and the result is unambiguous: the value-domain rule
 (Silhouette on the clustering labels) selects the correct count on **both**
 machines with zero variance across sweeps, whereas the index-domain rule
 (the cost-knee criterion on the `Dynp` cost curve) under-counts to **two** on the
-Intel curve — see Table 8 (M1) and Table 12 (Intel). The third alternative, a
-*fixed* penalty, generalises worst of all: §5.2 (Table 9) and §5.3 (Table 13) show
+Intel curve — see Table 9 (M1) and Table 13 (Intel). The third alternative, a
+*fixed* penalty, generalises worst of all: §5.2 (Table 10) and §5.3 (Table 14) show
 the same hand-set value yielding different counts on the two machines, which is
 precisely the per-machine tuning constant this project set out to eliminate.
 The value-domain rule is adopted because it is the one that demonstrably works on
@@ -704,7 +761,7 @@ therefore, *a priori*, a function of the experimenter's sampling density as well
 as of the machine, and this would be a serious objection to any count reported
 here.
 
-It is answered empirically in §5.4 (Table 19). The M1 was re-measured end to end
+It is answered empirically in §5.4 (Table 20). The M1 was re-measured end to end
 at 5, 10 and 20 points per octave and the Intel machine likewise re-measured at 5,
 10 and 20 (both under 2 MiB huge pages; the earlier subsampled Intel rows are now
 superseded by direct measurement — §5.4); the selected count is **invariant across
@@ -796,13 +853,13 @@ what the automatic claim means.
 **A disclosure about the analysis scripts, not the pipeline.** The claim above is
 about the productive path, and two auxiliary scripts previously departed from it in a
 way that the earlier draft did not record. `scripts/capacity_ci.py` (the ten-sweep capacity
-spread of Table 10) and `compare_curves.py --annotate` (the boundary markers in
+spread of Table 11) and `compare_curves.py --annotate` (the boundary markers in
 Figs. 9, 10 and 12) both localised boundaries with a **fixed PELT penalty of 3.0** —
 precisely the hand-set constant §6 claims to have eliminated. Reporting a headline
 capacity through an estimator the dissertation elsewhere disowns is indefensible even
 when it makes no numerical difference, so both scripts now default to the productive
 automatic path, with the penalty available only as an explicit `--penalty` override for
-the sensitivity analyses of Tables 8 and 12. It happens to make no difference here —
+the sensitivity analyses of Tables 9 and 13. It happens to make no difference here —
 on the ten-sweep Intel data the two paths return identical per-sweep capacities in all
 ten sweeps, which is why the previously published figures stand unchanged — but that
 is a fact to be checked and stated, not assumed.
@@ -862,11 +919,11 @@ Two observations condemn the method. First, only **two** tiers are recovered on 
 machine with four documented levels, and both are recovered as adjacent bands
 rather than a hierarchy. Second, and more damning, the tier labelled "L1" has a
 mean latency of **178 ns** — two orders of magnitude above this core's true
-~1.6 ns L1 (§5.3, Table 10) and squarely in DRAM territory. The absolute values are
+~1.6 ns L1 (§5.3, Table 11) and squarely in DRAM territory. The absolute values are
 dominated by `rdtscp` serialisation overhead, and the two "tiers" are a partition
 of measurement noise, not of memory. Compare the WSS method on the *same core*,
 which resolves L1 at 1.59 ns, L2 at 4.75 ns, L3 at 22.94 ns and DRAM at 123.25 ns
-(Table 10). The failure is therefore not the missing ARM flush.
+(Table 11). The failure is therefore not the missing ARM flush.
 
 Three barriers explain it, in order of severity:
 
@@ -923,6 +980,47 @@ a third machine is identified as future work (§6).
 
 ### 5.1 Test machines
 
+Both machines are consumer laptop parts, and both are described below by all three
+lenses of §1 in turn: the vendor's own system report (Table 4a), the OS topology
+descriptor (Table 5), and the probe's measurement (§5.2, §5.3). The first lens is
+recorded first because it establishes what a user is given *before* any tool is run.
+
+**Table 4a: The commercial view — what each vendor's system report states.**
+Verbatim from Windows System Properties and macOS System Information respectively.
+
+| | Intel machine | Apple machine |
+| :------------------ | :---------------------------------- | :------------------------------ |
+| Processor / chip | 13th Gen Intel Core i5-13450HX @ 2.40 GHz | Apple M1 |
+| Model | — | MacBook Air (`MacBookAir10,1`) |
+| Physical cores | 10 — 6 performance + 4 efficiency | 8 — 4 performance + 4 efficiency |
+| Logical processors | 16 (SMT on the P-cores) | 8 (no SMT) |
+| Installed memory | **24.0 GB** (23.7 GB usable) | **8 GB** unified |
+| Memory reserved | ~0.3 GB — firmware + Intel UHD Graphics | none fixed — see below |
+| Discrete graphics | NVIDIA RTX 5050 Laptop (8 GB) | — (integrated, unified) |
+| **Cache hierarchy** | **not reported** | **not reported** |
+
+Three observations follow, and the third is the one that matters to this
+dissertation. First, the two memory figures are not directly comparable in kind:
+the Intel machine's 24.0 GB is DRAM dedicated to the CPU, from which the
+firmware and the integrated Intel UHD adapter reserve roughly 0.3 GB, leaving
+23.7 GB usable. The M1's 8 GB is **unified memory** — CPU, GPU and Neural Engine
+allocate from a single physical pool on demand, so there is no fixed carve-out to
+subtract. Consistent with that, both macOS and `lstopo` report the M1's full 8 GB
+(8192 MB) with no discrepancy between them, whereas the Intel machine's advertised
+and reported figures do diverge, for a reason traced in §5.1's discussion of
+`GetNumaAvailableMemoryNodeEx` below.
+
+Second, the M1 is the **smaller-memory machine by a factor of three** yet carries
+the *larger* L2 (12 MiB against 1.25 MiB per core) and an undocumented SLC. Cache
+capacity and DRAM capacity are independent design axes, and a specification sheet
+that reports only the latter tells a performance engineer almost nothing.
+
+Third, and decisively: **neither vendor reports a single cache figure.** Model,
+core count, memory, firmware version, serial number — and nothing about the memory
+hierarchy. This is the commercial lens's characteristic failure, and it is total
+rather than partial. Everything that follows in this chapter exists because this
+table stops here.
+
 **Table 4: The two machines evaluated, with the hardware parameters that
 matter to the method.**
 
@@ -955,16 +1053,20 @@ plausible. Table 5 records what each source reports, collected by
 `scripts/collect_ground_truth.py`.
 
 **Table 5: Ground-truth provenance — what each source reports for the probed core,
-and the value the framework uses.**
+and the value the framework uses.** The framework's own reader takes the M1 figures
+from `sysctl hw.perflevel0.*` (the performance cluster) and the Intel figures from
+`GetLogicalProcessorInformationEx`, filtered to the caches whose processor-affinity
+mask serves CPU 0. The third column lists the *generic* interface that would have
+been read instead had the per-core distinction been overlooked.
 
-| Machine | Cache | Framework uses | Source key | Generic key (not used) | Independent check (`hwloc`) |
-| :------- | :----- | :-------------- | :------------------------------ | :---------------------- | :---------------------------- |
-| Apple M1 | L1d | **128 KiB** | `hw.perflevel0.l1dcachesize` | `hw.l1dcachesize` = 64 KiB (E-cluster) | `L1d 128KB` on cores 4–7 ✓ |
-| Apple M1 | L2 | **12 MiB** | `hw.perflevel0.l2cachesize` | `hw.l2cachesize` = 4 MiB (E-cluster) | `L2 L#1 (12MB)` ✓ |
-| Apple M1 | SLC | *not reported* | — | — | absent from `lstopo` output |
-| Intel i5-13450HX | L1d | **48 KiB** | `GetLogicalProcessorInformationEx` | `Win32_CacheMemory` = 288 KiB (6 × 48, per socket) | — |
-| Intel i5-13450HX | L2 | **1.25 MiB** | `GetLogicalProcessorInformationEx` | `Win32_CacheMemory` = 7680 KiB (6 × 1.25, per socket) | — |
-| Intel i5-13450HX | L3 | **20 MiB** | `GetLogicalProcessorInformationEx` | — (shared; per-socket and per-core coincide) | — |
+| Machine | Cache | Framework uses | Generic source (not used) | Independent check (`hwloc`) |
+| :------------ | :------ | :------------ | :--------------------------------- | :------------------------ |
+| Apple M1 | L1d | **128 KiB** | `hw.l1dcachesize` = 64 KiB (E-cluster) | `L1d 128KB`, cores 4–7 ✓ |
+| Apple M1 | L2 | **12 MiB** | `hw.l2cachesize` = 4 MiB (E-cluster) | `L2 L#1 (12MB)` ✓ |
+| Apple M1 | SLC | *not reported* | — | absent from `lstopo` |
+| Intel i5 | L1d | **48 KiB** | `Win32_CacheMemory` = 288 KiB (6 × 48, per socket) | `L1d L#0 (48KB)`, cores 0–5 ✓ |
+| Intel i5 | L2 | **1.25 MiB** | `Win32_CacheMemory` = 7680 KiB (6 × 1.25, per socket) | `L2 L#0 (1280KB)` per P-core ✓ |
+| Intel i5 | L3 | **20 MiB** | — (shared; per-socket and per-core coincide) | `L3 L#0 (20MB)` ✓ |
 
 Two points follow. First, the **error the generic keys would have introduced is not
 subtle**: on the M1 the detected L1 boundary of 157.5 KiB scores +23.0 % against the
@@ -978,7 +1080,124 @@ Second, `hwloc` is an **independent implementation, not an independent source**.
 reads the same OS interfaces this framework does, so its agreement confirms the
 values are being read correctly, not that they are complete. The M1's System-Level
 Cache is absent from `lstopo` exactly as it is absent from `sysctl` — which is the
-chain-of-trust argument of §2.2 observed directly on the hardware under test.
+chain-of-trust argument of §2.2 observed directly on the hardware under test. On the
+Intel part, by contrast, `lstopo` reports a **complete** hierarchy (L1d 48 KiB, L2
+1280 KiB per core, L3 20 MiB, then memory), and there is no undocumented tier. The
+incompleteness argument therefore applies to the M1 and *not* to the Intel machine;
+what motivates measurement on the Intel part is the separate finding of §5.3, that a
+documented 20 MiB L3 can be behaviourally unreachable.
+
+Third, and consequentially for the probe's core-pinning strategy, **the two
+heterogeneous parts number their cores in opposite orders.** `lstopo` places the
+Intel's six performance cores first — `Core L#0` carries a 48 KiB L1d and a 1280 KiB
+L2, and hosts logical processors `P#0` and `P#1` — with the four efficiency cores
+(32 KiB L1d, a shared 2048 KiB L2) last, at `P#12`–`P#15`. On the M1 the order is
+reversed: logical CPUs 0–3 are Icestorm efficiency cores and 4–7 are Firestorm
+performance cores. The probe's Windows path pins to logical CPU 0
+(`SetThreadAffinityMask(..., 1)`), which is therefore a **performance** core on this
+Intel part — confirmed by `lstopo` — whereas the same strategy on the M1 would have
+selected an *efficiency* core. That is precisely why the Apple path uses a
+performance-cluster QoS hint rather than an affinity mask (§3.1). The pinning
+strategy is correct on both platforms, but for platform-specific reasons rather than
+by a single portable rule.
+
+A further detail follows from the same output and bears on §5.3.2's contention
+experiment. The Intel performance cores carry SMT — `Core L#0` hosts both `P#0` and
+`P#1` — so pinning to logical CPU 0 leaves a sibling thread sharing that core's L1
+and L2. The contention experiment pins its eight workers to logical CPUs 2–9, which
+`lstopo` shows to be physical cores 1–4; the probe's own physical core, comprising
+`P#0` and `P#1`, is left entirely idle. The measured contention is therefore
+last-level-cache contention, not SMT interference within the probing core.
+
+**Two figures reported by the discovery tools do not match the Intel machine's
+advertised configuration, and both differences are informative rather than
+troubling.** The first concerns memory. Windows System Properties reports
+**24.0 GB installed (23.7 GB usable)**, whereas `lstopo` heads its output
+`Machine (6928MB total)` — a factor of roughly 3.5. This is not a contradiction
+between the two but a difference in what is being reported: hwloc's Windows backend
+obtains node memory through `GetNumaAvailableMemoryNodeEx`, which returns the memory
+*available* on the node at the instant of the query, not the quantity installed. The
+figure is therefore a snapshot of free memory during the run, which is unremarkable
+on a machine concurrently hosting the WSL 2 virtual machine used for the lmbench
+cross-check of §5.6 — WSL 2 reserves a large fraction of host RAM by default. Table 6
+supplies the control that confirms this reading. No
+result in this chapter turns on the distinction. The sweeps reach 512 MiB, an order
+of magnitude below even the smaller figure; every capacity reported is a working-set
+size, which is a property of the address range walked and not of installed memory;
+and the one place memory pressure genuinely matters — the 512 MiB large-page
+allocation failing with Windows error 1450 under load (§5.3.2) — depends on
+contiguous *physical* memory and pool fragmentation rather than on total capacity.
+
+The second discrepancy is more consequential, and it corroborates a design decision
+taken in §3.1.1. Windows advertises the part as **2.40 GHz**; the framework's runtime
+calibration returned **0.383 ns/tick**, that is a **2.61 GHz** invariant TSC — a
+difference of **8.8 %**. Again both figures are correct, because they describe
+different clocks. The advertised 2.40 GHz is the performance-core *base* frequency,
+a quantity that varies continuously in service under turbo and thermal control. The
+invariant TSC, by contrast, ticks at a fixed reference rate deliberately decoupled
+from core frequency — that decoupling is precisely what makes it invariant, and what
+makes it usable as a timebase at all. The two are not required to coincide, and on
+this part they do not. The consequence is direct: had the framework converted ticks
+to nanoseconds using the advertised 2.40 GHz rather than calibrating, **every latency
+in §5.3 would be inflated by 8.8 %** — the L1 plateau reported at 1.57 ns would have
+appeared as 1.71 ns, and the L3 plateau at 22.94 ns as 24.96 ns. Detected
+*capacities* would have been untouched, since a working-set size never passes through
+the tick conversion; the error would have been confined to the latency column, where
+no internal consistency check could have exposed it, and where a plausible-looking
+wrong number is considerably more dangerous than an obviously wrong one. The
+runtime-calibration path (§3.1.1) is thus not a portability convenience but a
+correctness requirement, and this machine supplies the counterexample that shows why.
+
+**The M1 supplies the control for the memory-reporting claim, and a compact
+illustration of the whole argument.** Table 6 sets the three views of that machine
+side by side: what the vendor's own system report states, what `hwloc` derives from
+the OS, and what Auto-Echo measures.
+
+**Table 6: Apple M1 — three views of the same machine.** The vendor system report,
+an independent topology tool, and this framework, on the machine of §5.2.
+
+| Property | macOS System Information | `lstopo` (hwloc) | Auto-Echo |
+| :------------------ | :------------------------ | :---------------------------- | :------------------------- |
+| Model | MacBook Air, `MacBookAir10,1`; Apple M1 | — | — |
+| Cores | 8 total: 4 performance + 4 efficiency | 8 PUs, `P#0`–`P#7`, in two L2 clusters | probes one performance core |
+| Installed memory | 8 GB | `Machine (8192MB total)` — exact | not probed (sweep tops out at 512 MiB) |
+| L1d, P-core | *not reported* | `L1d L#4 (128KB)`, cores 4–7 | **157.5 KiB** (+23.0 %) |
+| L1d, E-core | *not reported* | `L1d L#0 (64KB)`, cores 0–3 | not probed (P-core pinned) |
+| L2, P-cluster | *not reported* | `L2 L#1 (12MB)` | **13.9 MiB** (+16.1 %) |
+| L2, E-cluster | *not reported* | `L2 L#0 (4096KB)` | not probed |
+| System-Level Cache | *not reported* | *not reported* | resolved within the L2 band |
+
+Three things follow. First, the **vendor's own system report contains no cache
+information whatsoever** — model, core count, memory, firmware and serial number, but
+not one figure about the memory hierarchy. The user who wants to know the L1 size
+must already be reaching for a second tool, which is the practical form of the
+motivation set out in §1.
+
+Second, the M1 **resolves the Windows memory anomaly discussed above**. Here `lstopo`
+reports `Machine (8192MB total)` against 8 GB installed — an exact match, to the
+byte. The same tool therefore reports installed memory correctly on macOS and a much
+smaller figure on Windows, which localises the discrepancy to the platform backend
+rather than to hwloc or to either machine. This is what makes the
+`GetNumaAvailableMemoryNodeEx` explanation a supported inference rather than a
+plausible guess: the two platforms constitute a controlled comparison, differing in
+the backend and agreeing in the tool.
+
+Third, the E-cluster figures independently **confirm the reading of Table 5**. That
+table asserts that the generic `sysctl` keys describe the efficiency cluster rather
+than the performance cluster, which is why the framework does not use them. `lstopo`
+reports the E-cores at `L1d 64KB` and their shared `L2 L#0 (4096KB)` — exactly the
+64 KiB and 4 MiB that `hw.l1dcachesize` and `hw.l2cachesize` return. The generic keys
+are not wrong; they describe a different core from the one being probed, and an
+evaluation that used them would have scored a Firestorm measurement against Icestorm
+hardware. The +146 % error quantified earlier is the size of that mistake.
+
+The last row is the one that matters most for this dissertation's argument. Neither
+the vendor nor `hwloc` reports the System-Level Cache at all, yet §5.2 shows the
+probe responding to a capacity beyond the 12 MiB L2. The three columns are thus not
+three attempts at the same measurement, of which one is best; they are three
+*different* claims — what the vendor chooses to publish, what the OS chooses to
+export, and what the hardware actually does — and only the third is answerable by
+measurement.
 
 *The **Status** column uses a deliberate three-tier vocabulary. **Validated**: every
 documented cache was recovered and matched OS ground truth — the M1 (2/2, 100%) and,
@@ -992,9 +1211,9 @@ track this convention and are deliberate, not omissions.*
 The WSS probe produces a clean, well-separated latency curve (Fig. 5). Automatic
 model selection (Silhouette count + change-point localisation) and validation
 against `sysctl` ground truth, over three independent sweeps, give **three
-levels — a result on which all five estimators independently agree** (Table 8):
+levels — a result on which all five estimators independently agree** (Table 9):
 
-**Table 6: Discovered hierarchy vs. ground truth (Apple M1, performance core).**
+**Table 7: Discovered hierarchy vs. ground truth (Apple M1, performance core).**
 
 | Level | Detected capacity | Median latency | p5–p95 | Ground truth | Error |
 | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -1045,8 +1264,8 @@ This split is *not* selected by automatic model selection and is reported only a
 **candidate finer-grained sub-structure** (§5.5), not a headline level. Separating cache from shared-L2 contention or TLB effects there
 would need performance-counter, per-core-type and cross-core experiments.
 
-**Table 7: Model selection — Elbow and Silhouette *agree* (Fig. 6).** Contrast
-Table 11, where the same two criteria disagree on the Intel curve.
+**Table 8: Model selection — Elbow and Silhouette *agree* (Fig. 6).** Contrast
+Table 12, where the same two criteria disagree on the Intel curve.
 
 | Criterion | Selected k |
 | :--- | :---: |
@@ -1057,7 +1276,7 @@ The Elbow Method (knee of the K-Means inertia curve) and the Silhouette Score
 independently select **k = 3** well-separated latency groups (L1, L2, DRAM),
 satisfying the project requirement to apply and compare both.
 
-**Table 8: Level-count estimators — comparison and stability (3 sweeps).**
+**Table 9: Level-count estimators — comparison and stability (3 sweeps).**
 
 | Rank | Method | Mean levels | Std (stability) | Modal |
 | :--- | :--- | :---: | :---: | :---: |
@@ -1073,16 +1292,16 @@ clustering count therefore coincide on this machine. The comparison answers the 
 requirement — *which estimator is most accurate and consistent* — with
 **K-Means + Silhouette**, which the pipeline therefore uses to set the level
 count. (That choice is corroborated on the Intel part, where K-Means + Silhouette is
-likewise the accurate and perfectly stable counter under huge pages — §5.3, Table 12.
+likewise the accurate and perfectly stable counter under huge pages — §5.3, Table 13.
 What does *not* generalise is the five-way unanimity seen here: on the Intel curve
 the independent change-point cost-knee and the Elbow criterion both under-count to
 two, so agreement of *every* estimator is an M1-specific result, not a universal
 one.) Change-point is
-retained to *localise* each capacity once a count is fixed. Table 9 underlines the point: a *fixed* PELT penalty would give
+retained to *localise* each capacity once a count is fixed. Table 10 underlines the point: a *fixed* PELT penalty would give
 anywhere from 6 levels down to 3 depending on an arbitrary hand-set value —
 exactly the manual knob the automatic, penalty-free method removes.
 
-**Table 9: Why a fixed penalty is unsatisfactory — change-point level count vs.
+**Table 10: Why a fixed penalty is unsatisfactory — change-point level count vs.
 the manual PELT penalty (motivating the penalty-free automatic method).**
 
 | Penalty | 1 | 2 | 3 | 4 | 6 | 8 | 10 |
@@ -1151,7 +1370,7 @@ working set and the page-walk penalty that saturated the 4 KiB curve is largely
 removed: the deep-memory plateau falls from ~143 ns to **~122 ns**, and a **fourth
 plateau near ~20 MiB** — absent under 4 KiB — emerges before the DRAM rise. Over
 ten huge-page sweeps the pipeline now recovers **four levels — L1, L2, L3 and
-DRAM** — and matches **all three documented caches** (Table 10): L1 within +16.0 %,
+DRAM** — and matches **all three documented caches** (Table 11): L1 within +16.0 %,
 L2 within −1.5 %, and the L3 at 19.7 MiB, within −1.5 % (0.02 octaves) of the
 20 MiB shared L3. **Recall rises to 3/3 = 100 % at 100 % precision (no
 false-positive knees; F1 = 1.00), with mean absolute capacity error 6.3 % across
@@ -1174,7 +1393,7 @@ minimum remains the right statistic for latency (interference can only add time)
 but it is the wrong statistic for a knee, and the two must not be conflated. The
 per-sweep median is reported for all three caches accordingly.
 
-**Table 10: Discovered hierarchy vs. per-core ground truth (Intel i5-13450HX,
+**Table 11: Discovered hierarchy vs. per-core ground truth (Intel i5-13450HX,
 performance core; 2 MiB huge pages, `--runs 10 --max-mb 512 --huge-pages`).
 Capacities are the median of per-sweep detections; latencies are from the
 aggregate minimum-over-sweeps curve.**
@@ -1211,8 +1430,8 @@ architecture" remains too strong — the closely-spaced deep bands are still a r
 where the count-free cross-checks scatter, the 1-D under-counting behaviour
 anticipated in §2.5.
 
-**Table 11: Model selection — Elbow and Silhouette *disagree* (Fig. 8).** Unlike the
-M1 (Table 7, where both criteria select k = 3), on the huge-page Intel sweep the
+**Table 12: Model selection — Elbow and Silhouette *disagree* (Fig. 8).** Unlike the
+M1 (Table 8, where both criteria select k = 3), on the huge-page Intel sweep the
 two automatic model-selection criteria still choose **different** cluster counts —
 even though the L3 is now resolved and the Silhouette count is stable:
 
@@ -1226,12 +1445,12 @@ every run agrees on — whereas the Silhouette score peaks sharply at **k = 4**
 (score 0.933, up from 0.885 on 4 KiB pages: the recovered L3 plateau makes the
 four-way partition cleaner). This persistent disagreement, visualised in Fig. 8, is
 the model-selection form of the *not-unanimous* x86 estimator ensemble quantified in
-Table 12, and the direct contrast with the M1's fully unanimous agreement
-(Table 7 / Fig. 6): huge pages make the productive Silhouette count both accurate and
+Table 13, and the direct contrast with the M1's fully unanimous agreement
+(Table 8 / Fig. 6): huge pages make the productive Silhouette count both accurate and
 stable, but they do **not** make the Elbow criterion agree with it.
 
-**Table 12: Level-count estimators — comparison and stability (Intel i5-13450HX,
-2 MiB huge pages, 10 sweeps; expected 4).** Compare with the M1's Table 8, where all
+**Table 13: Level-count estimators — comparison and stability (Intel i5-13450HX,
+2 MiB huge pages, 10 sweeps; expected 4).** Compare with the M1's Table 9, where all
 five estimators agreed at three with zero variance; here the *productive* counter is
 accurate and perfectly stable, but the ensemble is not unanimous.
 
@@ -1260,11 +1479,11 @@ three-sweep run its count was the least stable in the ensemble (mean 4.33, std 0
 with individual sweeps reaching five). Its count is the one that moves most between
 runs, which is consistent with the variance-heterogeneity argument of §3.2.1.
 
-**Table 13: Change-point level count vs. manual PELT penalty (Intel, 2 MiB huge-page
-sweep).** Unlike the M1 (Table 9, where the count slid from six to three as the
+**Table 14: Change-point level count vs. manual PELT penalty (Intel, 2 MiB huge-page
+sweep).** Unlike the M1 (Table 10, where the count slid from six to three as the
 penalty rose), the Intel huge-page min-curve segments into **four** bands across
 the whole penalty range: the L1 / L2 / L3 / DRAM shape is robustly
-present in the curve, so it is the *cross-estimator* agreement (Table 12), not the
+present in the curve, so it is the *cross-estimator* agreement (Table 13), not the
 penalty, that remains partial.
 
 | Penalty | 1 | 2 | 3 | 4 | 6 | 8 | 10 |
@@ -1272,7 +1491,7 @@ penalty, that remains partial.
 | Levels | 4 | 4 | 4 | 4 | 4 | 4 | 4 |
 
 **A note on the Windows ground-truth path.** The per-core figures against which
-Table 10 is scored required a correction to the *oracle*, not to the measurement.
+Table 11 is scored required a correction to the *oracle*, not to the measurement.
 The legacy `Win32_CacheMemory` WMI class reports **per-socket aggregate** sizes —
 L1 as 288 KiB (6 × 48 KiB), L2 as 7680 KiB (6 × 1.25 MiB) — which a single-core
 probe can never match, and against which the accuracy metric consequently read a
@@ -1281,7 +1500,7 @@ spurious 0 %. `validation.py` now queries `GetLogicalProcessorInformationEx`
 serves CPU 0, with the WMI aggregate retained only as a labelled fallback. This
 closes a genuine portability gap: macOS and Linux already read per-core sizes via
 `sysctl` and `sysfs`. Two independent corrections were therefore needed to reach
-the result in Table 10 — the per-core oracle lifted recall from a spurious 0 % to
+the result in Table 11 — the per-core oracle lifted recall from a spurious 0 % to
 66.7 %, and the huge-page control carried it from 66.7 % to 100 %.
 
 ![Auto-Echo memory latency curve — Intel (Fig. 7)](../data/intel_ci/memory_mountain.png)  
@@ -1292,7 +1511,7 @@ L2 (~1.25 MiB), L3 and DRAM (~122 ns) — because the huge-page TLB reach remove
 page-walk cost that, under the default 4 KiB pages, saturated the curve at ~143 ns
 and masked the L3 (§5.3). Note that the plotted curve is the minimum-over-sweeps
 envelope, so its third dashed boundary sits at **13.9 MiB**, whereas the capacity
-reported in Table 10 is the per-sweep median, **19.7 MiB**: the wide min–max band and
+reported in Table 11 is the per-sweep median, **19.7 MiB**: the wide min–max band and
 the sawtooth between ~14 and ~32 MiB are exactly the deep-region variability that
 makes the lower envelope depart the plateau early (§5.3). The figure is therefore
 the visual form of that argument, not a competing measurement.*
@@ -1322,17 +1541,17 @@ own. It was run as `lat_mem_rd -N 5 -t 512 128` (512 MiB maximum working set,
 128-byte stride, minimum of five repetitions per size), its 131-point curve
 converted to Auto-Echo's format by `scripts/crosscheck_lmbench.py` and overlaid with
 `scripts/compare_curves.py` (Fig. 9). For each of the four plateaus Auto-Echo discovered,
-Table 14 reports Auto-Echo's median latency, lmbench's median over the *same*
+Table 15 reports Auto-Echo's median latency, lmbench's median over the *same*
 working-set range, and their ratio. The Auto-Echo curve here is the three-sweep run
 of `data/intel_i5_13450hx/`, retained because `lmbench` was swept against it; its
-latencies differ from Table 10's ten-sweep values by 1–9%.
+latencies differ from Table 11's ten-sweep values by 1–9%.
 
-**Table 14: External cross-check — Auto-Echo vs lmbench `lat_mem_rd` per plateau
+**Table 15: External cross-check — Auto-Echo vs lmbench `lat_mem_rd` per plateau
 (Intel i5-13450HX).** Auto-Echo ran natively on Windows with 2 MiB huge pages;
 lmbench ran under WSL2 on 4 KiB pages with the `-t` (`thrash_initialize`,
 deliberately TLB-hostile) initialiser. The two allocations are therefore comparable
 only where the working set stays within first-level TLB reach — which, as the
-point-wise ratios of Table 15 show, holds for L1 alone rather than for the inner
+point-wise ratios of Table 16 show, holds for L1 alone rather than for the inner
 hierarchy as a whole.
 
 | Level (WSS range) | Auto-Echo median | lmbench median | Ratio (lmbench / AE) |
@@ -1356,13 +1575,13 @@ account for a 22 % offset, so the two tools genuinely differ in what their timin
 construct includes rather than in how they summarise repeats.
 
 **A single median per band conceals a shape disagreement, and reporting only the
-median would overstate the agreement.** Table 14's per-band medians invite the reading
+median would overstate the agreement.** Table 15's per-band medians invite the reading
 that the inner hierarchy agrees closely and only the deep region diverges. The
 point-wise ratio refutes it. Interpolating Auto-Echo onto lmbench's grid in log-WSS
 and taking the ratio at every lmbench sample gives, per band:
 
-**Table 15: Point-wise lmbench/Auto-Echo latency ratio within each band — what
-Table 14's medians conceal (`scripts/crosscheck_plateaus.py`).**
+**Table 16: Point-wise lmbench/Auto-Echo latency ratio within each band — what
+Table 15's medians conceal (`scripts/crosscheck_plateaus.py`).**
 
 | Band | min | median | max | n |
 | :--- | :---: | :---: | :---: | :---: |
@@ -1421,7 +1640,7 @@ defeats the prefetcher and
 the TLB *exactly as Auto-Echo's randomised pointer chase does* (§3.1), which is why
 it — not the prefetchable default — is the correct comparator. That prefetch-defeated
 default run is retained as a negative control (`lmbench_stride_curve.csv`); its
-collapse confirms that the Table 14 agreement is between two genuinely latency-bound
+collapse confirms that the Table 15 agreement is between two genuinely latency-bound
 measurements, not two throughput-bound ones.
 
 **The strongest form of the check: does the *inference* transfer?** Everything above
@@ -1437,7 +1656,7 @@ so the outcome is evidence about the inference stage rather than a restatement o
 latency comparison. It is reproducible as the third section of
 `scripts/crosscheck_plateaus.py`.
 
-**Table 16: Inference transfer — Auto-Echo's unsupervised pipeline applied to
+**Table 17: Inference transfer — Auto-Echo's unsupervised pipeline applied to
 lmbench's curve, validated against the same per-core ground truth.**
 
 | Level | Detected capacity | Median latency | Documented | Error | Match |
@@ -1503,7 +1722,10 @@ the share of the L3 actually available to it.
 
 **The contending load** is eight worker processes (`scripts/l3_load.py`), each continuously
 streaming (read-modify-write) a 32 MiB buffer — comfortably larger than the 20 MiB
-L3 — pinned to logical CPUs 2–9 with CPU 0 (the probe's core) left free. Eight such
+L3 — pinned to logical CPUs 2–9, which `lstopo` confirms are physical cores 1–4,
+leaving the probe's own physical core (logical CPUs 0 and 1, an SMT pair) entirely
+idle. The contention measured is therefore last-level-cache contention rather than
+SMT interference within the probing core. Eight such
 streams keep the shared L3 saturated with worker data; being memory-bandwidth-bound
 the workers sit at ~24 % CPU each (~36 % machine-wide) while generating the eviction
 traffic that matters. **Both conditions use 2 MiB huge pages**, so page size is held
@@ -1521,12 +1743,12 @@ are visible in the productive counter, and are recorded here rather than left in
 repository: across its three sweeps the automatic pipeline returned **five, five and
 four** levels (L3 knees at 13.9, 9.85 and 9.85 MiB), and the Silhouette counter
 selected a modal **seven** with mean 5.33 and standard deviation 1.25 — ranking last
-of the five estimators, against the mean 4.00 and standard deviation 0.00 of Table 12.
-So the "std 0.00" stability of Table 12 is a property of a *quiet* machine, not of the
+of the five estimators, against the mean 4.00 and standard deviation 0.00 of Table 13.
+So the "std 0.00" stability of Table 13 is a property of a *quiet* machine, not of the
 part: on a contaminated run the same counter over-counts and becomes the least stable
 member of its own ensemble. That is a genuine limitation of the productive counter and
 is carried into §5.5. It also means "quiescent" names an *intent* here rather than a
-verified state, which is why the row in Table 17 is labelled by run rather than by
+verified state, which is why the row in Table 18 is labelled by run rather than by
 condition, and why the §5.3 ten-sweep run is shown alongside it as the genuinely quiet
 reference.
 
@@ -1541,7 +1763,7 @@ geometric grid either way — and only shortens the DRAM tail. The interference 
 itself a finding: a memory-streaming load and a large-page probe compete for one
 physical pool.
 
-**Result.** The detected L3 capacity moves decisively with contention (Table 17).
+**Result.** The detected L3 capacity moves decisively with contention (Table 18).
 Under the eight-worker load the knee collapses to a stable **3.5 MiB** in every one
 of three sweeps — against 19.7 MiB on the quiet machine and 9.85–13.9 MiB on the
 contaminated matched control. The effective last-level cache a single probing core
@@ -1549,7 +1771,7 @@ can map therefore shrinks by roughly a factor of six when the other cores stream
 through the shared L3: from −1.5 % of nominal to **−83 %**. The three conditions fall
 in the predicted order, and the ordering is the result.
 
-**Table 17: Detected L3 capacity by run, from quiet to loaded (all 2 MiB huge pages;
+**Table 18: Detected L3 capacity by run, from quiet to loaded (all 2 MiB huge pages;
 loaded = eight processes each streaming a 32 MiB buffer, pinned off CPU 0). Rows are
 labelled by run directory rather than by nominal condition, because the middle row's
 own dispersion shows it was not in fact quiescent.**
@@ -1608,7 +1830,7 @@ plateau and climbs toward DRAM far earlier — the detected L3 knee moves to ~3.
 (dotted lines) — because the streaming workers evict the probe's lines from the
 shared 20 MiB L3. As in Fig. 7, both curves are minimum-over-sweeps envelopes, so the
 quiet run's annotated boundary is its envelope value of 13.9 MiB rather than the
-19.7 MiB per-sweep median of Table 10; the loaded knee is 3.5 MiB on either statistic. The load also lifts the whole curve, uniformly and from the
+19.7 MiB per-sweep median of Table 11; the loaded knee is 3.5 MiB on either statistic. The load also lifts the whole curve, uniformly and from the
 smallest working set upward (memory-bandwidth contention plus the clock effect
 discussed in §5.3.2); the decisive, frequency-invariant signal is the leftward shift
 of the knee, not the vertical offset. The loaded sweep stops at 128 MiB because the
@@ -1687,7 +1909,7 @@ idealised four-level x86 shape only under a 2 MiB huge-page control — the defa
 4 KiB pages exhibit TLB effects the synthetic profile omits — and should be read in
 preference to it.*
 
-**Table 18: Cross-platform summary — what the same code path recovers on
+**Table 19: Cross-platform summary — what the same code path recovers on
 each machine, and the hardware parameters that differ.**
 
 | Metric | Apple M1 (ARM64) | Intel i5-13450HX (x86-64) |
@@ -1709,10 +1931,10 @@ depends on how many points fall in each cluster, and that is fixed by the sweep'
 geometric grid rather than by the hardware. A level spanning more octaves receives
 proportionally more points, so in principle the selected count could be an
 artefact of the experimenter's chosen resolution. This is a sharper threat than
-the change-point penalty sensitivity of Tables 5 and 9, because unlike the penalty
-it is not varied anywhere else in the evaluation. Table 19 varies it directly.
+the change-point penalty sensitivity of Tables 5 and 10, because unlike the penalty
+it is not varied anywhere else in the evaluation. Table 20 varies it directly.
 
-**Table 19: Sampling-density robustness — the selected level count against sweep
+**Table 20: Sampling-density robustness — the selected level count against sweep
 resolution (`scripts/sampling_density_sweep.py`).** **Both** machines' rows are now *fresh
 measurements*: the probe was re-run end to end at each density, so every row is an
 independent sweep rather than a re-analysis. (This is why the M1 row at ten points
@@ -1761,7 +1983,7 @@ single high **L2+SLC** shelf (~9 ns) where the Intel shows a distinct
 **L1→L2→L3** staircase up to the recovered L3; both climb to a ~122–130 ns DRAM
 plateau. As in Fig. 7, the plotted Intel curve is the minimum-over-sweeps envelope,
 so its annotated L3 boundary sits at 13.9 MiB rather than the 19.7 MiB per-sweep
-median of Table 10 (§5.3). This is direct visual evidence for architecture-agnostic
+median of Table 11 (§5.3). This is direct visual evidence for architecture-agnostic
 recovery of the hierarchy across ARM64 and x86-64.
 
 ![Cross-machine latency overlay (Fig. 12)](../data/compare_mountain.png)
@@ -1776,9 +1998,9 @@ the largest working-set size still served at plateau latency): the transition
 *midpoint* (geometric mean of the last-fit and first-miss sizes) and an *onset*
 estimator (the last size still on the plateau floor before latency departs from
 it by the **+15%** threshold of §3.4). Absolute error against per-core ground
-truth (Table 20):
+truth (Table 21):
 
-**Table 20: Capacity-estimator comparison — absolute error against per-core
+**Table 21: Capacity-estimator comparison — absolute error against per-core
 ground truth for all four selectable estimators (`--capacity-method`).**
 
 | Level (per-core GT) | Edge (default) | Midpoint | Onset | Hybrid |
@@ -1792,7 +2014,7 @@ ground truth for all four selectable estimators (`--capacity-method`).**
 *(Intel rows are computed on the single aggregate 2 MiB huge-page curve of §5.3 —
 the minimum-over-sweeps envelope — so that all four estimators are compared on
 identical input. The L3 row therefore carries the −30.4% envelope artefact
-discussed above rather than the 19.7 MiB per-sweep median of Table 10; the
+discussed above rather than the 19.7 MiB per-sweep median of Table 11; the
 comparison between estimators, which is what this table is for, is unaffected
 because every column sees the same curve. All four columns are reproducible with
 `--capacity-method {edge,midpoint,onset,hybrid}`.)*
@@ -1841,7 +2063,7 @@ nominal (+16–23% here). On a **shared** cache a second, downward mechanism com
 with it — the probing core can only map the share of the cache left to it, so
 contention pulls the detected knee in. Which mechanism dominates is a property of the
 run, not of the estimator: on the quiet ten-sweep Intel run the L3 edge reads
-−1.5% (Table 10), on the minimum-over-sweeps envelope of the same run −30.4%, and
+−1.5% (Table 11), on the minimum-over-sweeps envelope of the same run −30.4%, and
 under a deliberate shared-L3 load −83% (§5.3.2). The claim that the sign of the edge
 bias is fixed by whether a cache is private or shared is therefore **too strong** and
 is withdrawn: what the evidence supports is that the upward soft-knee bias is
@@ -1931,7 +2153,7 @@ Following the structure of the reference paper's own threats section [1]:
   re-measured at 5, 10 and 20 points per octave and the Intel machine likewise
   measured directly at 5, 10 and 20 (superseding the earlier subsampled rows), and
   the selected count is invariant on both machines, as is every cross-check
-  estimator (§5.4, Table 19). The residual limit is one of scope —
+  estimator (§5.4, Table 20). The residual limit is one of scope —
   invariance over two machines and a four-fold density range does not establish
   invariance for a hierarchy whose levels sit closer together than either of these.
 - **Solver-dependence of the level count (eliminated).** The counting stage solves
@@ -1962,7 +2184,7 @@ Following the structure of the reference paper's own threats section [1]:
   latencies run 22–54 % higher, and the agreement is genuinely close only in **L1**:
   within the L2 band the point-wise ratio climbs from 1.1× to 1.9×, a
   page-size/virtualisation confound that begins earlier in the sweep than the
-  original deep-region framing implied (Table 15). An
+  original deep-region framing implied (Table 16). An
   **onset**-based capacity estimator — first departure from the
   plateau median rather than the plateau edge — was implemented and evaluated as a
   way to remove the soft-knee bias, but is rejected as a default: it is exact on the
@@ -1978,7 +2200,7 @@ Following the structure of the reference paper's own threats section [1]:
   default 4 KiB pages and 100 % under the 2 MiB huge-page run (§5.3). The macOS/Linux
   paths use per-core `sysctl`/`sysfs` values and were already unaffected.
 - **Count stability is load-dependent, not a fixed property of the method.** The
-  zero-variance level count of Table 12 is measured on a quiet machine. On a
+  zero-variance level count of Table 13 is measured on a quiet machine. On a
   contaminated huge-page run of the same part — visible in its own dispersion, an L1
   band spanning 1.57–3.52 ns against 1.57–1.69 ns quiet — the same productive counter
   returned five, five and four levels and its Silhouette selection reached a modal
@@ -2006,9 +2228,9 @@ Following the structure of the reference paper's own threats section [1]:
   spread) rather than a *p*-value. With ten sweeps per condition a rank test and
   bootstrap intervals would be straightforward and are not claimed to have been done.
 - **Conclusion validity.** On the M1 the level count is stable across sweeps and
-  all five estimators agree on three levels (Table 8). On the Intel part the 2 MiB
+  all five estimators agree on three levels (Table 9). On the Intel part the 2 MiB
   huge-page run makes the *productive* K-Means + Silhouette counter stable and correct
-  at four levels (std 0; Table 12), but the estimator ensemble does **not** reach
+  at four levels (std 0; Table 13), but the estimator ensemble does **not** reach
   M1-style unanimity — the Elbow and change-point cost-knee cross-checks under-count to
   two (§5.3), and on the noisier lmbench curve DBSCAN joins them at two (§5.3.1).
   Cross-estimator agreement is therefore **machine- and data-dependent, not
@@ -2065,12 +2287,25 @@ memory" user right (no kernel module or driver). Remaining directions:
   translation cost. Answering it on Apple Silicon now requires a different
   instrument — performance counters, or a kernel-side allocation — rather than a
   larger page.
-- **Broadening the hardware base.** Both machines evaluated here are consumer
-  laptop performance cores, so the generalisation claim rests on a narrow sample.
-  Three extensions would each probe a different axis: a newer Apple-silicon part
-  (a second ARM64 generation), an AMD or server x86 part (a different LLC topology,
-  which would test whether the contention-driven under-read *measured* in §5.3.2 also
-  appears on a differently-shared last-level cache), and an *efficiency* core (a materially different cache
+- **Broadening the hardware base — an AMD Zen part is the highest-value next run.**
+  Both machines evaluated here are consumer laptop performance cores, so the
+  generalisation claim rests on a narrow sample. Of the available extensions, an
+  **AMD Zen** part is the most discriminating, because it differs from the Intel
+  machine in precisely the variable §5.3.2 isolates. Raptor Lake's 20 MiB L3 is a
+  single last-level cache shared by every core over a ring interconnect, which is why
+  eight streaming workers were able to drive the probe's recovered capacity down by a
+  factor of six — the probe measures the *share left to it*, not the nominal size.
+  Zen's L3 is organised differently: it is a **victim cache private to each core
+  complex (CCX)**, with traffic between complexes crossing the Infinity Fabric rather
+  than a shared ring. The prediction that follows is specific and falsifiable — a
+  core probing under load from workers **pinned to its own CCX** should show the same
+  contention-driven under-read, whereas workers pinned to a **different CCX** should
+  leave its slice largely intact, since they are not competing for the same physical
+  cache. Confirming that would establish that §5.3.2 measures cache *sharing* rather
+  than merely system load; failing to confirm it would bound the finding to
+  ring-based LLCs. Either outcome is a result. Two further axes are worth a run each:
+  a newer Apple-silicon part (a second ARM64 generation, and a check on whether the
+  SLC becomes documented), and an *efficiency* core (a materially different cache
   geometry on the same die). (The per-core Windows ground-truth query via
   `GetLogicalProcessorInformationEx` is now
   implemented, so the automatic accuracy metric is valid on Windows — §5.3, §5.5.)
@@ -2082,7 +2317,7 @@ memory" user right (no kernel module or driver). Remaining directions:
 - **External cross-check against lmbench (delivered), and the control it still
   needs.** The converter (`scripts/crosscheck_lmbench.py`) that turns `lat_mem_rd` output [9]
   into the same curve format has been exercised end to end: lmbench was built and
-  swept on the Intel machine and overlaid on Auto-Echo's curve (§5.3.1, Tables 13–15,
+  swept on the Intel machine and overlaid on Auto-Echo's curve (§5.3.1, Tables 14–16,
   Fig. 9). The two independent tools recover the same four-tier staircase with an
   almost identical L1→L2 step, and Auto-Echo's inference stage applied to lmbench's
   curve recovers the correct level count and both TLB-unmasked capacities — validating
@@ -2148,7 +2383,7 @@ memory" user right (no kernel module or driver). Remaining directions:
   estimator in the ensemble still fitted heuristically.
 - **Statistical confidence (delivered for capacities).** A ten-sweep huge-page run
   now reports each detected capacity as a median with min–max spread
-  (`scripts/capacity_ci.py`; Table 10 footnote): the private L1/L2 boundaries are invariant
+  (`scripts/capacity_ci.py`; Table 11 footnote): the private L1/L2 boundaries are invariant
   (zero spread across ten sweeps) and only the shared L3 varies (13.9–19.7 MiB),
   corroborating the contention finding of §5.3.2. Ten sweeps is too few for a
   parametric interval, so a non-parametric spread is reported rather than a standard
@@ -2278,7 +2513,7 @@ including any part developed with AI assistance.*
 
 ### A.1 Tools used
 
-**Table 21: Generative-AI tools used during the project.**
+**Table 22: Generative-AI tools used during the project.**
 
 | Tool | Version / access | Period of use |
 | :--- | :--- | :--- |

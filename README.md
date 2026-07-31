@@ -246,6 +246,21 @@ python scripts/capacity_ci.py data/intel_ci/wss_curves_all.csv --ground-truth 20
 ./scripts/build_pdf.sh                    # rebuild the PDF (needs pandoc + XeLaTeX)
 ```
 
+**After a new multi-sweep run, regenerate the capacity sidecar**, or the dashboard
+will quietly fall back to the aggregate-curve capacities:
+
+```bash
+python scripts/capacity_ci.py data/<run>/wss_curves_all.csv \
+    --json data/<run>/capacity_spread.json
+```
+
+`capacity_spread.json` holds the **median of the per-sweep detections**, which is
+what §5.3 reports. The aggregated `wss_curve.csv` is the *minimum* over sweeps at
+each size — the right statistic for a latency, the wrong one for a boundary, since
+the lower envelope drags a detected knee inward. On the ten-sweep Intel run that is
+the difference between an L3 of 13.9 MiB (−30.4 %) and one of 19.7 MiB (−1.5 %).
+`npm run prep` prints which of the two it used for each machine.
+
 ### Two results worth knowing before you run it
 
 **Page size can hide a cache entirely.** On the Intel machine with default 4 KiB

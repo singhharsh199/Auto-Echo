@@ -17,9 +17,14 @@ export function ValidationPanel({ machine }: { machine: Machine }) {
     {
       label: "Mean abs. error",
       value: pct(metrics.meanAbsErrorPct),
-      hint: `matched caches, ${metrics.sweeps ?? "?"} sweeps`,
+      // Averaged over every sweep and cache, NOT over the median capacities in
+      // the table below -- the two differ (Intel: 7.3% vs 6.3%). Naming the
+      // statistic keeps a reader from trying to derive one from the other.
+      hint: `per-sweep mean, ${metrics.sweeps ?? "?"} sweeps`,
     },
   ];
+
+  const prov = machine.capacityProvenance;
 
   return (
     <section className="panel rise" style={{ "--i": 6 } as React.CSSProperties}>
@@ -27,6 +32,15 @@ export function ValidationPanel({ machine }: { machine: Machine }) {
         <h2 className="panel__title">Validation vs OS ground truth</h2>
         <span className="eyebrow">Hungarian matching · factor-of-2 tolerance</span>
       </header>
+
+      {prov && (
+        <p className="provenance">
+          Detected capacities are the <strong>median of {prov.sweeps} per-sweep
+          detections</strong>, not a single detection on the aggregated curve — the
+          aggregate is the minimum over sweeps, which biases a boundary inward.
+          Localised by {prov.rule}.
+        </p>
+      )}
 
       <div className="stats">
         {stats.map((s) => (

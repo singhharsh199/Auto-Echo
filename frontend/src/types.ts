@@ -73,6 +73,16 @@ export interface Machine {
   runs: Run[];
   band: BandPoint[];
   levels: Level[];
+  /**
+   * Present when capacities are the median of per-sweep detections rather than a
+   * single detection on the aggregated (minimum-over-sweeps) curve. Absent for
+   * runs with no `capacity_spread.json`. See `scripts/build-data.mjs`.
+   */
+  capacityProvenance: {
+    sweeps: number;
+    rule: string;
+    source: string;
+  } | null;
   estimators: Estimator[];
   penalty: { penalty: number; levels: number }[];
   comparison: ComparisonRow[];

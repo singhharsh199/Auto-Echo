@@ -1303,6 +1303,579 @@ main.shell {
   }
 }
 
+/* Provenance note: states which statistic a panel is showing. Deliberately part
+   of the reading flow rather than a footnote, because the distinction it draws
+   (per-sweep median vs aggregate-curve detection) changes the headline number. */
+.provenance {
+  margin: 0 var(--s-6) var(--s-5);
+  padding: var(--s-3) var(--s-4);
+  background: hsl(var(--accent-2-hsl) / 0.06);
+  border-left: 2px solid hsl(var(--accent-2-hsl) / 0.5);
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+.provenance strong {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .provenance {
+    margin-inline: var(--s-4);
+  }
+}
+
+/* ==========================================================================
+   Architecture lens — the three-lens comparative section
+   --------------------------------------------------------------------------
+   Built entirely from the tokens above; it introduces no new colour. The one
+   local idea is `--tone-hsl`, set per cache-level block, which lets a single
+   set of gradient/border/glow rules serve all four levels instead of four
+   near-identical blocks.
+
+   NOTE on the vendor prefix order: `-webkit-backdrop-filter` must come *first*
+   and the unprefixed property second, matching every other glass surface in
+   this file. lightningcss de-duplicates the pair and keeps the last one it
+   sees; with the order reversed it drops the standard property and the effect
+   silently disappears in browsers that only accept the unprefixed form.
+   ========================================================================= */
+
+.archLens {
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------ lens tabs -- */
+.lensTabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s-2);
+  margin: 0 var(--s-6) var(--s-6);
+  padding: var(--s-2);
+  background: var(--glass-light);
+  -webkit-backdrop-filter: blur(var(--blur));
+  backdrop-filter: blur(var(--blur));
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+}
+
+.lensTab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  color: var(--ink-3);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color var(--t) var(--ease),
+    background var(--t) var(--ease),
+    border-color var(--t) var(--ease),
+    transform var(--t-fast) var(--ease-out);
+}
+
+.lensTab:hover {
+  color: var(--ink-2);
+  background: hsl(0 0% 100% / 0.03);
+}
+
+.lensTab:active {
+  transform: scale(0.99);
+}
+
+/* Active tab: the accent gradient plus a soft glow, so the current lens reads
+   as lit rather than merely tinted. */
+.lensTab[aria-selected="true"] {
+  color: var(--ink);
+  background: linear-gradient(
+    135deg,
+    hsl(var(--accent-hsl) / 0.22),
+    hsl(var(--accent-2-hsl) / 0.12)
+  );
+  border-color: var(--hairline-accent);
+  box-shadow:
+    inset 0 1px 0 hsl(0 0% 100% / 0.08),
+    0 6px 20px hsl(var(--accent-hsl) / 0.16);
+}
+
+.lensTab__ord {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-4);
+  transition: color var(--t) var(--ease);
+}
+
+.lensTab[aria-selected="true"] .lensTab__ord {
+  color: var(--accent);
+}
+
+.lensTab__body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.lensTab__name {
+  font-weight: 600;
+  font-size: 0.875rem;
+  letter-spacing: -0.01em;
+}
+
+.lensTab__tag {
+  font-size: 0.75rem;
+  color: var(--ink-4);
+}
+
+/* ----------------------------------------------------------- lens panel -- */
+/* Remounted on every lens change (React `key`), so this entrance replays and
+   the switch reads as a new frame rather than a text swap. */
+.lensPanel {
+  animation: lensIn var(--t-slow) var(--ease-out) both;
+}
+
+@keyframes lensIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.lensMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-3) var(--s-6);
+  padding: 0 var(--s-6) var(--s-5);
+}
+
+.lensMeta__source {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--ink-2);
+}
+
+.lensMeta__q {
+  flex: 1 1 22rem;
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+
+/* ------------------------------------------------------------ lens grid -- */
+.lensGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-5);
+  padding: 0 var(--s-6);
+}
+
+/* ------------------------------------------------------------ lens card -- */
+.lensCard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding: var(--s-5);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(140%);
+  backdrop-filter: blur(var(--blur)) saturate(140%);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  transition:
+    border-color var(--t) var(--ease),
+    box-shadow var(--t) var(--ease),
+    transform var(--t) var(--ease-out);
+}
+
+/* A hairline of the machine's own series colour along the top edge, so the card
+   ties to its curve in the chart above without a legend. */
+.lensCard::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: linear-gradient(90deg, var(--machine), transparent 70%);
+  opacity: 0.85;
+}
+
+.lensCard:hover {
+  transform: translateY(-2px);
+  border-color: var(--hairline-strong);
+  box-shadow: var(--shadow-lg);
+}
+
+.lensCard__head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.lensCard__dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--r-full);
+  background: var(--machine);
+  box-shadow: 0 0 0 3px hsl(0 0% 100% / 0.05);
+}
+
+.lensCard__name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.lensCard__sub {
+  margin: 1px 0 0;
+  font-size: 0.75rem;
+  color: var(--ink-4);
+}
+
+/* ------------------------------------------------------------- verdict --- */
+.verdict {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-md);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  border: 1px solid transparent;
+}
+
+.verdict__led {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+}
+
+.verdict--ok {
+  color: var(--ok);
+  background: hsl(var(--ok-hsl) / 0.09);
+  border-color: hsl(var(--ok-hsl) / 0.22);
+}
+
+.verdict--warn {
+  color: var(--warn);
+  background: hsl(var(--warn-hsl) / 0.09);
+  border-color: hsl(var(--warn-hsl) / 0.22);
+}
+
+/* --------------------------------------------------------- lens facts --- */
+.lensFacts {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+}
+
+.lensFact {
+  display: grid;
+  grid-template-columns: 8.5rem minmax(0, 1fr);
+  gap: var(--s-3);
+  padding: var(--s-2) 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.lensFact:last-child {
+  border-bottom: 0;
+}
+
+.lensFact__k {
+  font-size: 0.75rem;
+  color: var(--ink-4);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.lensFact__v {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+.lensFact__v--ok {
+  color: var(--ink);
+}
+
+.lensFact__v--warn {
+  color: var(--warn);
+}
+
+/* ------------------------------------------------------- cache stack ----- */
+/* `flex-grow` on the children distributes the container height in proportion to
+   log2(capacity); the container therefore needs a definite height for the
+   distribution to mean anything. `margin-top: auto` on the wrapper keeps the two
+   cards' stacks aligned even when their fact lists differ in length. */
+.lensCard__stack {
+  margin-top: auto;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-height: 19rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.blk {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-height: 3.25rem;
+  padding: var(--s-3);
+  border-radius: var(--r-md);
+  border: 1px solid hsl(var(--tone-hsl) / 0.3);
+  background: linear-gradient(
+    135deg,
+    hsl(var(--tone-hsl) / 0.16),
+    hsl(var(--tone-hsl) / 0.05)
+  );
+  animation: blkIn var(--t-slow) var(--ease-out) both;
+  animation-delay: calc(var(--i) * 70ms);
+  transition:
+    border-color var(--t) var(--ease),
+    background var(--t) var(--ease);
+}
+
+.blk:hover {
+  border-color: hsl(var(--tone-hsl) / 0.55);
+  background: linear-gradient(
+    135deg,
+    hsl(var(--tone-hsl) / 0.24),
+    hsl(var(--tone-hsl) / 0.08)
+  );
+}
+
+@keyframes blkIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px) scaleY(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.blk--l1 {
+  --tone-hsl: var(--accent-hsl);
+}
+.blk--l2 {
+  --tone-hsl: var(--accent-2-hsl);
+}
+.blk--l3 {
+  --tone-hsl: var(--accent-3-hsl);
+}
+.blk--dram {
+  --tone-hsl: 33 100% 60%;
+}
+
+/* A ghost block is hardware that exists but which this lens cannot see: no fill,
+   a dashed edge, and the content dimmed. The dashes are the visual claim. */
+.blk--ghost {
+  background: repeating-linear-gradient(
+    135deg,
+    hsl(var(--tone-hsl) / 0.05) 0 10px,
+    transparent 10px 20px
+  );
+  border-style: dashed;
+  border-color: hsl(var(--tone-hsl) / 0.4);
+  color: var(--ink-3);
+}
+
+.blk--ghost:hover {
+  background: repeating-linear-gradient(
+    135deg,
+    hsl(var(--tone-hsl) / 0.1) 0 10px,
+    transparent 10px 20px
+  );
+  border-color: hsl(var(--tone-hsl) / 0.65);
+}
+
+.blk__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.blk__label {
+  font-weight: 600;
+  font-size: 0.8125rem;
+  letter-spacing: -0.01em;
+}
+
+.blk__cap {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--tone-hsl));
+}
+
+.blk--ghost .blk__cap {
+  color: var(--ink-3);
+}
+
+.blk__note {
+  margin: 0;
+  font-size: 0.6875rem;
+  color: var(--ink-4);
+}
+
+.blk__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  margin-top: var(--s-1);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: hsl(var(--tone-hsl) / 0.9);
+}
+
+.blk__icon {
+  width: 12px;
+  height: 12px;
+}
+
+/* Empty state: the lens reports no hierarchy at all. Rendered as an explicit
+   absence rather than a blank area, because the absence is the finding. */
+.stack--empty {
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-4);
+  padding: var(--s-6);
+  border: 1px dashed var(--hairline-strong);
+  border-radius: var(--r-md);
+  background: hsl(0 0% 100% / 0.015);
+}
+
+.stack__void {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--r-full);
+  border: 1px dashed var(--ink-4);
+  opacity: 0.6;
+}
+
+.stack__emptyText {
+  max-width: 24rem;
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--ink-3);
+  text-align: center;
+  text-wrap: pretty;
+}
+
+/* -------------------------------------------------------------- insight -- */
+.insight {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-4);
+  margin: var(--s-6) var(--s-6) 0;
+  padding: var(--s-5) var(--s-6);
+  background: linear-gradient(
+    120deg,
+    hsl(var(--accent-hsl) / 0.1),
+    hsl(var(--accent-2-hsl) / 0.05) 60%,
+    transparent
+  );
+  border-top: 1px solid var(--hairline);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+
+.insight__mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--r-md);
+  background: hsl(var(--accent-hsl) / 0.16);
+  border: 1px solid var(--hairline-accent);
+  color: var(--accent);
+}
+
+.insight__mark svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.insight__text {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.65;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+/* ----------------------------------------------------------- responsive -- */
+@media (max-width: 900px) {
+  .lensGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Tabs go vertical rather than shrinking: three legible rows beat three
+     truncated columns. */
+  .lensTabs {
+    grid-template-columns: minmax(0, 1fr);
+    margin-inline: var(--s-4);
+  }
+
+  .lensMeta,
+  .lensGrid {
+    padding-inline: var(--s-4);
+  }
+
+  .insight {
+    margin-inline: var(--s-4);
+    padding-inline: var(--s-4);
+  }
+
+  .lensFact {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .stack {
+    min-height: 0;
+  }
+}
+
 /* ------------------------------------------------------- reduced motion -- */
 /* Entrance animations are removed outright rather than shortened, so nothing
    moves; hover feedback degrades to colour only. */
@@ -1319,7 +1892,9 @@ main.shell {
   .level:hover,
   .rung:hover,
   .chip:active,
-  .seg:active {
+  .seg:active,
+  .lensCard:hover,
+  .lensTab:active {
     transform: none;
   }
 }

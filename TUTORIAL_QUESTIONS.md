@@ -1030,7 +1030,7 @@ stopwatch is just as coarse; you **amortised** its coarseness.
 **Intermediate.** Apple Silicon's timer runs at 24 MHz = **~41.7 ns/tick** (exactly
 `125/3`), against a **1.53 ns** L1 hit — **27× coarser**. Timing one access yields 0
 or 1 tick and nothing between. Solution: `DEFAULT_MIN_HOPS = 1 << 20`
-(`wss/__init__.py:44`), then `(c1-c0)/hops` (`wss_probe.c:363`). 2²⁰ × 1.53 ns ≈ 1.6
+(`wss/__init__.py:44`), then `(c1-c0)/hops` (`wss_probe.c:370`). 2²⁰ × 1.53 ns ≈ 1.6
 ms ≈ 38,500 ticks, so the granularity's effect is 1/38,500 — sub-nanosecond effective
 resolution.
 
@@ -1117,9 +1117,58 @@ pointer chain: `for (i...) sum += buf[idx[i]];` (addresses still random, prefetc
 still defeated). (a) What now goes wrong that a fence would be needed to fix? (b)
 Would the measured latency rise or fall, and why? *(hint: MLP)*
 
-**Student's answer:** _not yet given — pending_
+**Student's answer:** _model answer — this one was not attempted live, so what follows
+is the target standard rather than a record of a given response._
 
-**Verification:** _pending_
+> (a) The chain breaks. In `sum += buf[idx[i]]` the address of load *n+1* comes from
+> `idx[i]`, which is already in a register — it does **not** depend on the *result* of
+> load *n*. Nothing serialises the loads any more, so the out-of-order engine issues
+> as many as its miss-handling resources allow, and the second `get_ticks()` can be
+> reached while loads are still in flight. A hardware fence (`lfence` on x86, `dsb` on
+> ARM) before the closing timestamp would be needed to make the timer bracket
+> *completion* rather than *issue*.
+>
+> (b) It would **fall**, sharply — by roughly the achieved memory-level parallelism.
+> I would be measuring throughput per access, not load-to-use latency.
+
+**Verification — (a): pass ✔ / (b): pass ✔ — this is the right answer, and the reason
+it is right is the single most important idea in the probe.**
+
+**(a)** Correct, and note *what kind* of failure it is. The pointer chase gives
+**MLP = 1 by construction**: `p = (void **)(*p)` means load *n+1* cannot even have its
+address computed until load *n* has returned data. The hardware is not being *asked*
+to behave; it is physically unable to do otherwise. Break the dependency and that
+guarantee evaporates:
+
+| | Pointer chase | Independent loads |
+|:---|:---|:---|
+| Address of load *n+1* | **result** of load *n* | `idx[i]`, already known |
+| Concurrent misses | 1 | limited by MSHRs / line-fill buffers (~10–20) |
+| Ordering | enforced by data dependency | nothing enforces it |
+| Fence needed? | **No** — free | **Yes**, and it perturbs the measurement |
+
+The fence is also not a *fix*. It corrects where the timestamps land, but it cannot
+un-overlap the loads **inside** the loop. To recover true latency you must serialise,
+and the only zero-cost way to serialise is the data dependency. That is the whole
+argument: the pointer chase is not merely "a way to defeat the prefetcher" — it is the
+mechanism that pins MLP to 1.
+
+**(b)** Right, and be ready to quantify it. Measured latency ≈ true latency ÷ MLP. A
+core sustaining ~12 concurrent misses would report the M1's 130.43 ns DRAM plateau as
+roughly **11 ns** — around L2 speed.
+
+The damage is worst exactly where the project needs precision. MLP can only be
+exploited when there are misses to overlap, so the compression grows with depth: L1
+(already ~1 cycle, no misses to overlap) barely moves, while DRAM collapses. The
+staircase does not merely shift down — it **flattens**, and the L2/L3/DRAM boundaries
+the pipeline exists to find are compressed towards each other or lost entirely.
+
+> **The one-line viva answer:** *"Independent loads measure memory **bandwidth**;
+> dependent loads measure memory **latency**. My staircase is a latency curve, so the
+> dependency is not optional — it is the definition of the quantity."*
+
+This is also why `lat_mem_rd` in lmbench [9] chases pointers, and why the absence of
+fences in `wss_probe.c` is a design result rather than an omission (Q1.5, Q1.6).
 
 ### Side-note V.1 — What are hwloc, CPUID leaf 4, and Intel MLC? (for the opening)
 
@@ -1239,6 +1288,63 @@ recovered errors (+23.0% / +16.1% against P-core figures, versus +146% / +248%
 against E-core figures) prove empirically that the bias worked. This evidence is now
 recorded in the dissertation (§3.1 and Table 5).
 
+### Side-note V.3 — Intel `lstopo` output, and what it settled
+
+Run natively on Windows (`hwloc-win64-build-2.14.0`):
+
+```
+Machine (6928MB total) + Package L#0
+  NUMANode L#0 (P#0 6928MB)
+  L3 L#0 (20MB)
+    L2 L#0 (1280KB) + L1d L#0 (48KB) + L1i L#0 (32KB) + Core L#0
+      PU L#0 (P#0)                     ← SMT pair on one physical core
+      PU L#1 (P#1)
+    ... Cores L#1–L#5, identical                    ← six PERFORMANCE cores
+    L2 L#6 (2048KB)                                 ← shared E-cluster L2
+      L1d L#6 (32KB) + Core L#6 + PU L#12 (P#12)
+      ... Cores L#7–L#9                             ← four EFFICIENCY cores
+```
+
+**1. Every documented figure confirmed.** L1d **48 KiB**, L2 **1280 KiB = 1.25 MiB**
+per P-core, L3 **20 MiB** shared — exactly Table 4. Also confirms "6 performance + 4
+efficiency cores".
+
+**2. The pending question is answered: CPU 0 *is* a performance core on this Intel
+part.** `Core L#0` carries the P-core caches (48 KiB L1d, 1280 KiB L2) and hosts
+`P#0`/`P#1`. So `SetThreadAffinityMask(..., 1)` → logical CPU 0 → a P-core. The C
+comment *"CPU 0 is a performance core on hybrid Intel"* is **verified, not assumed**.
+
+**3. The two platforms number their cores in opposite orders — a genuinely
+interesting asymmetry.**
+
+| | CPUs 0–3 | Highest CPUs |
+|:---|:---|:---|
+| **Intel i5-13450HX** | **Performance** cores (P#0–P#11) | Efficiency (P#12–P#15) |
+| **Apple M1** | **Efficiency** cores | Performance (4–7) |
+
+So pinning to CPU 0 gives a P-core on Intel and an **E-core on the M1**. That is
+exactly why the Apple path uses a performance-cluster QoS hint instead of an affinity
+mask. *The pinning strategy is correct on both platforms, but for platform-specific
+reasons rather than by one portable rule* — a good answer if asked "why doesn't the
+probe just pin to core 0 everywhere?"
+
+**4. SMT detail that strengthens §5.3.2.** P-cores carry SMT (`Core L#0` hosts `P#0`
+*and* `P#1`); E-cores do not. The contention experiment pins workers to logical CPUs
+2–9 = physical cores 1–4, leaving the probe's own physical core (`P#0` + `P#1`)
+entirely idle. So the measured effect is **last-level-cache contention, not SMT
+interference** within the probing core.
+
+**5. ⚠️ An honest limit on the "incomplete table" argument.** On the Intel part
+`lstopo` reports a **complete** hierarchy — L1d, L2, L3, memory, with no hidden tier.
+There is no Intel equivalent of the M1's SLC. **So the incompleteness argument applies
+to the M1 and *not* to the Intel machine.** What justifies measurement on the Intel
+part is the *separate* finding that a documented 20 MiB L3 can be behaviourally
+unreachable (§5.3). Do not over-generalise the SLC story to both machines — an
+examiner who has seen this output will catch it.
+
+*(Recorded in the dissertation as Table 5's `hwloc` column, plus three new paragraphs
+in §5.1 and a precision fix in §5.3.2.)*
+
 ---
 
 # Part 3 — Question Bank
@@ -1250,52 +1356,541 @@ that NumPy's inner loops are C anyway. Give the quantitative argument for why
 this cannot work, using the L1 latency you actually measured and a realistic
 figure for CPython bytecode dispatch.
 
+> **Answer.** The argument is a **signal-to-instrument** argument, and it is lost
+> before NumPy is even reached.
+>
+> **The arithmetic.** The signal is an L1 hit at **1.53 ns** (M1, §5.2). One CPython
+> bytecode dispatch — fetch opcode, switch dispatch through the eval loop, unbox,
+> `Py_INCREF`/`Py_DECREF`, re-box — costs **~30–100 ns**, and a single `a[i]` on a
+> Python object involves several. Taking the *most* generous figure:
+>
+> | | Cost | Ratio to signal |
+> |:---|---:|---:|
+> | L1 hit (the thing being measured) | 1.53 ns | 1× |
+> | One optimistic bytecode dispatch | ~30 ns | **~20×** |
+> | Realistic per-iteration Python cost | ~100 ns | **~65×** |
+>
+> The instrument is 20–65× more expensive than the signal. Worse, it is *not
+> constant*: the interpreter's own cost varies with refcount traffic and allocator
+> state, so it does not even subtract cleanly. Every plateau would be buried under a
+> variable ~100 ns pedestal, and the L1/L2 step — 1.53 → 9.19 ns on the M1, a
+> difference of **7.7 ns** — would be far inside the noise.
+>
+> **Why NumPy specifically does not rescue it.** Two independent reasons:
+>
+> 1. **Wrong access pattern.** NumPy is fast on *vectorised operations over
+>    contiguous memory with predictable strides* — precisely the pattern this probe
+>    must **avoid**, because it is what the stride prefetcher was built to serve.
+>    Fancy indexing `a[idx]` is a **gather**: NumPy issues those loads
+>    *independently*, so MLP ≫ 1 and the measurement becomes bandwidth, not latency
+>    (see Q1.4 in Part 2). NumPy gives you exactly the wrong thing, quickly.
+> 2. **The dependency cannot be expressed.** "Load, wait for the result, use that
+>    result as the next address" is inherently serial. There is no vectorised
+>    formulation — the only way to write it is a Python-level loop, which returns
+>    you to the interpreter overhead above.
+>
+> **The framing that wins the mark:** *"The timed region must contain nothing but
+> the loads. In C the loop body compiles to a single `ldr` on ARM / `mov` on x86. In
+> Python the loop body is the interpreter — I would be measuring CPython, not the
+> memory hierarchy."*
+
 **1.2** The probe links slots into a *single Hamiltonian cycle* rather than a
 random graph of pointers. What specific failure occurs if you build a random
 graph instead, and at which end of the working-set range would you notice it?
+
+> **Answer.** A random graph makes the **effective working set collapse to
+> O(√n)**, so the probe would silently measure a far smaller region than it
+> allocated.
+>
+> **The mechanism.** If each slot points at a *uniformly random* slot, the result is
+> a **random functional graph**, not a permutation. Such a graph decomposes into
+> "rho" shapes — a tail running into a cycle — and for *n* nodes the expected cycle
+> length is **Θ(√n)**, not *n*. A chase entering that cycle stays in it forever.
+>
+> **The numbers.** At the top of the sweep, 512 MiB at a 128 B stride is
+> *n* ≈ 4.2 million slots. Expected cycle ≈ √(4.2 × 10⁶) ≈ **2,000 slots** ≈ 256 KiB
+> of touched memory — against 512 MiB allocated, a factor of **2,000× too small**.
+> That fits comfortably in the M1's L2.
+>
+> **What the curve would look like.** Latency would rise normally out of L1 and then
+> **stop rising** — flattening at whatever level the √n footprint happens to fit
+> into, and never reaching DRAM. You would conclude the machine has an enormous
+> last-level cache and no main memory. The staircase would lose its deepest and most
+> important step.
+>
+> **Where you would notice it: the large end, and only there.** At small working-set
+> sizes the whole buffer fits in L1 regardless of how it is linked, so a corrupted
+> cycle is invisible; the bug appears exactly where the interesting caches are. This
+> is what makes it dangerous — a smoke test on a small buffer passes.
+>
+> **What the Hamiltonian cycle guarantees.** A Fisher–Yates permutation [5] (seeded
+> xorshift64, so every sweep is reproducible) visits **every slot exactly once per
+> traversal**, so *effective WSS ≡ allocated WSS* by construction. It has a second
+> benefit stated in §3.1: building the cycle **writes every slot**, which pre-faults
+> every page before timing begins, keeping page-fault cost out of the timed window.
 
 **1.3** Randomisation defeats the stride prefetcher. Does it defeat *all*
 prefetchers? Discuss with reference to Apple's data memory-dependent prefetcher
 (Augury, [46]) and explain why your M1 results are still defensible.
 
+> **Answer.** **No — and this is a genuine, named threat to the method on Apple
+> Silicon specifically.** The honest answer scores better than a confident one.
+>
+> **What randomisation does defeat.** Next-line, stream and stride engines [44],
+> [45] all work by detecting a *constant delta* between successive addresses. A
+> random permutation has no such delta, so they cannot run ahead. This is the
+> standard defence and the one lmbench relies on.
+>
+> **What it does not defeat.** A **data memory-dependent prefetcher (DMP)** does not
+> look at the address *sequence* — it inspects the *values being loaded*, identifies
+> ones that look like pointers, and prefetches them. Vicarte et al. (**Augury**,
+> [46]) demonstrated exactly such a unit on the Apple M1; Chen et al. (**GoFetch**,
+> [47]) later weaponised it against constant-time cryptography.
+>
+> **Why this is uncomfortable rather than academic:** a pointer chase is *precisely*
+> the access pattern a DMP targets — the loaded value **is** the next address. The
+> probe's core assumption (accesses are serialised and unprefetchable) is therefore
+> under direct threat on the very machine that produced the M1 results.
+>
+> **Why the results are still defensible — four points, strongest first:**
+>
+> 1. **The staircase is itself the evidence.** If the DMP were running ahead
+>    effectively, deep latencies would be *depressed* and the plateaus would blur.
+>    The M1 curves (§5.2, Fig. 5) show clean, well-separated plateaus with a sharp L1
+>    knee and a DRAM plateau at **130.43 ns** — a value consistent with an
+>    un-prefetched DRAM access. A working DMP would have pulled that down markedly.
+> 2. **It validated.** Both OS-documented caches were recovered within the
+>    factor-of-two tolerance (2/2, 100 % recall), which a substantially prefetched
+>    curve would not achieve.
+> 3. **The assumption is tested, not assumed.** The claim is empirical — I can point
+>    at the measured curve rather than at a datasheet.
+> 4. **The limit is stated, not hidden.** §5.5 records this explicitly as an
+>    empirical observation *on one part*, not a guarantee. The DMP is documented to
+>    require an observable pattern and to have bounded depth, but I do not rely on
+>    that.
+>
+> **The sentence to have ready:** *"Randomisation defeats stride prefetchers by
+> construction and appears to defeat the M1's DMP in practice — but 'appears to' is
+> the honest verb, and §5.5 says so."*
+
 **1.4** Explain why `stride` must be at least `sizeof(void *)`, and what class of
 bug the guard at `wss_probe.c:281` prevents. Why is this a security-relevant
 check and not merely a correctness one?
 
+> **Answer.** The guard prevents an **out-of-bounds heap write** (CWE-787) reachable
+> from pure Python.
+>
+> **The mechanism.** Cycle construction stores a pointer into each slot:
+>
+> ```c
+> char *slot = base + order[k] * (size_t)stride;
+> *(void **)slot = (void *)next;          /* an 8-byte store */
+> ```
+>
+> The allocation is sized `alloc_bytes = nslots * stride` where
+> `nslots = size_bytes / stride`. The **last** slot begins at `(nslots-1) * stride`,
+> and an 8-byte store there ends at `(nslots-1) * stride + 8`. If
+> `stride < sizeof(void *)`, that end address exceeds `alloc_bytes` — the final store
+> **runs off the end of the buffer**. The comment at line 280 says exactly this: *"a
+> sub-pointer stride would overflow the last slot's 8-byte store."*
+>
+> A sub-pointer stride is also incoherent on its own terms: consecutive slots would
+> **overlap**, so writing slot *k*'s pointer would corrupt slot *k+1*'s, and the
+> chase would follow a mangled graph.
+>
+> **Why it is a security check.** `measure_wss` is a **CPython C extension**, and
+> `stride` arrives from Python through `PyArg_ParseTuple` (line 271). It is therefore
+> **untrusted input crossing a language boundary** — from a memory-safe language into
+> one with no bounds checking. Without the guard, ordinary Python code
+> (`measure_wss(4096, 1, ...)`) triggers an out-of-bounds write in native code, with
+> all the usual consequences: heap-metadata corruption, a crash, or in the worst case
+> a controllable write primitive. Memory-safety invariants that C *assumes* must be
+> **enforced at the boundary**, because the caller's language does not enforce them.
+>
+> Note the guard's placement is deliberate: it sits with the other argument
+> validation (line 275 checks `stride <= 0`, `size_bytes < stride`, `hops <= 0`,
+> `repeats <= 0`) **before** any allocation or arithmetic — validate first, then act.
+
 **1.5** *"The probe uses `lfence` and `mfence` to stop the out-of-order engine
 reordering loads across the timer reads."* Evaluate this statement.
+
+> **Answer.** **The statement is false on the facts, and the reason it is false is
+> the most elegant point in the probe.**
+>
+> **Factually:** there is no `lfence`, `mfence` or `sfence` anywhere in the
+> codebase — `grep` returns nothing. What line 361/367 actually places around the
+> timed loop is a **compiler barrier**, `COMPILER_BARRIER()`.
+>
+> **Why no hardware fence is needed.** A fence exists to impose ordering where the
+> hardware is otherwise free to reorder. In this loop the hardware has **no such
+> freedom**:
+>
+> ```c
+> for (Py_ssize_t h = 0; h < hops; h++) {
+>     p = (void **)(*p);      /* the address of the next load IS this load's result */
+> }
+> ```
+>
+> The out-of-order engine cannot issue load *n+1* early, because it does not know
+> *where to load from* until load *n* returns. The chase is **fully serialised by
+> data dependency** — the comment at line 115 states precisely this. There is nothing
+> for a fence to prevent.
+>
+> **Why adding one would be actively harmful.** An `lfence` inside the loop would add
+> real cycles to **every one of the 2²⁰ hops**, and those cycles land *inside the
+> timed window* — contaminating the very quantity being measured. You would be
+> reporting "L1 latency plus fence overhead" and calling it L1 latency.
+>
+> **Where partial credit is due.** The ARM path *does* execute a barrier — `isb`
+> before `mrs cntvct_el0` (line 77) — but that is an **instruction**-synchronisation
+> barrier guarding the *counter read*, not a memory fence guarding the loads (Q1.8).
+> And on x86 the ordering guarantee is bought by choosing `__rdtscp` over `rdtsc`
+> (Q1.7). So the *fence decision was made twice* — once in the access pattern, once
+> in the instruction selection — and neither produced an `lfence`.
+>
+> **The reframing to offer:** *"The absence of fences is not an oversight; it is the
+> consequence of choosing an access pattern that enforces its own ordering — at zero
+> cost."*
 
 **1.6** Distinguish a **compiler barrier** from a **hardware fence**. Which does
 `wss_probe.c` use, what does it compile to, and why is the other one unnecessary
 *here* when it is mandatory in most microbenchmarks?
 
+> **Answer.** They defeat **two different adversaries acting at two different
+> times**, and conflating them is the classic error.
+>
+> | | Adversary | Acts at | Remedy | Runtime cost |
+> |:---|:---|:---|:---|:---|
+> | **Compiler barrier** | the optimiser | **build** time | `COMPILER_BARRIER()` | **zero** |
+> | **Hardware fence** | the out-of-order engine | **run** time | `lfence` / `dsb` | real cycles |
+>
+> **Which the code uses:** the compiler barrier only (lines 119–121):
+>
+> ```c
+> #if defined(_MSC_VER)
+> #define COMPILER_BARRIER() _ReadWriteBarrier()
+> #else
+> #define COMPILER_BARRIER() __asm__ __volatile__("" ::: "memory")
+> #endif
+> ```
+>
+> **What it compiles to: nothing.** The asm template is the empty string, so **no
+> instruction is emitted**. Its entire effect is on the optimiser: the `"memory"`
+> clobber declares that this statement may read or write any memory, so GCC/Clang
+> must not move memory operations across it and must materialise pending stores.
+> Zero instructions, zero cycles, full ordering — against the compiler.
+>
+> **Why the hardware fence is unnecessary *here*:** the data dependency has already
+> serialised the CPU (Q1.5). The probe gets CPU ordering **for free from its access
+> pattern** and therefore only has to pay for compiler ordering — which is also free.
+>
+> **Why it is mandatory in most microbenchmarks:** the typical benchmark times
+> independent work — independent loads, stores, or an arithmetic kernel — where no
+> dependency chain exists. There the CPU genuinely *can* overlap the timed work with
+> the timer reads, so a real fence is the only way to make the timestamps bracket
+> completion. (This is exactly the scenario of Q1.4 in Part 2.)
+>
+> **The trap to avoid:** do **not** conclude "so the barrier is unnecessary too". The
+> compiler barrier is **mandatory**. Without it, `-O3` is free to hoist the entire
+> chase out of the timed region, or delete it outright (Q1.9). The CPU is handled;
+> the compiler still is not.
+
 **1.7** Why `__rdtscp` rather than `rdtsc`? What does the extra `p` buy you, and
 what would you have to add alongside `rdtsc` to get the same guarantee?
 
+> **Answer.** Because `rdtsc` is **not serialising**, and `rdtscp` is *partially*
+> serialising.
+>
+> **The problem with `rdtsc`.** It is an ordinary instruction to the out-of-order
+> engine, which may execute it **before preceding instructions have retired**. The
+> timestamp can therefore be taken *too early*, so `c1 - c0` under-reports the true
+> elapsed time — the measurement is biased **fast**, in the direction that flatters
+> the result and is hardest to notice.
+>
+> **What the `p` buys.** `rdtscp` waits until **all previous instructions have
+> retired** before reading the counter. (It also returns the processor ID, which is
+> why the code passes `&aux` at line 65 — a useful side benefit, since a changed ID
+> would reveal a mid-measurement core migration.)
+>
+> **What you would add alongside plain `rdtsc`:**
+>
+> | Idiom | Effect | Cost |
+> |:---|:---|:---|
+> | `lfence; rdtsc` | drains prior *loads*; the modern idiom | cheap |
+> | `cpuid; rdtsc` | fully serialising; the classic idiom | heavy, **variable** latency, clobbers `eax/ebx/ecx/edx` |
+>
+> `cpuid` is the historically standard answer but a poor one for a timer: its own
+> latency is variable, so it injects noise into the quantity being measured.
+>
+> **The point that connects this to Q1.5:** choosing `__rdtscp` **is** choosing not
+> to need an `lfence` there. When an examiner asks "where are your fences?", the
+> answer is that one of them was **subsumed into the instruction selection** and the
+> other into the access pattern.
+>
+> **Precision worth volunteering:** `rdtscp` orders *prior* instructions but does not
+> stop *later* ones being hoisted above it. Strictly, a trailing `lfence` would close
+> that. The probe does not need one because the closing `COMPILER_BARRIER()` and the
+> final `g_sink = (void *)p` (line 368) force the dependent chain to have completed
+> before anything observable follows.
+
 **1.8** The ARM path executes `isb` before `mrs cntvct_el0`. Is that a memory
 fence? If not, what is it, and what would go wrong without it?
+
+> **Answer.** **No, it is not a memory fence.** Naming it correctly is the mark.
+>
+> ```c
+> asm volatile("isb; mrs %0, cntvct_el0" : "=r"(v) :: "memory");
+> ```
+>
+> **What `isb` is:** an **I**nstruction **S**ynchronisation **B**arrier. It flushes
+> the pipeline and guarantees that everything before it is complete before anything
+> after it is fetched and executed. It orders the **instruction stream**.
+>
+> **What ARM's actual memory barriers are:** `dmb` (Data Memory Barrier — orders
+> memory accesses) and `dsb` (Data Synchronisation Barrier — waits for them to
+> complete). `isb` is **neither**.
+>
+> **What goes wrong without it.** `mrs x0, cntvct_el0` reads the virtual counter, and
+> the ARM architecture explicitly permits the CPU to execute that read
+> **speculatively and early** — hoisting it above the code you intend to bracket. The
+> timestamps would then not delimit the loop: `c0` could be sampled after the loop
+> had begun, or `c1` before it finished. Symptoms are noisy deltas and occasionally
+> **impossibly small** ones. The ARM Architecture Reference Manual recommends `isb`
+> around counter reads for exactly this reason.
+>
+> **The instructive contrast with x86:**
+>
+> | | Ordering the *counter read* | Ordering the *loads* |
+> |:---|:---|:---|
+> | x86 | built into `__rdtscp` (retire-then-read) | data dependency |
+> | ARM | **explicit `isb`** — `mrs` has no such semantics | data dependency |
+>
+> Same problem, different instrument, because the two ISAs put the guarantee in
+> different places. The `"memory"` clobber on the asm statement additionally stops
+> the *compiler* moving accesses across the read — the compiler-barrier concern of
+> Q1.6, handled inline here.
 
 **1.9** Explain the difference between `void *volatile g_sink` and
 `volatile void *g_sink`. Which does the code use, what does `-O3` do if you get
 it wrong, and how would you *detect* that you had got it wrong from the output
 alone?
 
+> **Answer.** This is the most dangerous line in the file, because getting it wrong
+> produces **clean, plausible, physically impossible data** instead of a crash.
+>
+> **The distinction — read the declaration right-to-left from the identifier:**
+>
+> | Declaration | Reads as | What is volatile |
+> |:---|:---|:---|
+> | `void *volatile g_sink` | "`g_sink` is a **volatile pointer** to void" | the **pointer object itself** |
+> | `volatile void *g_sink` | "`g_sink` is a pointer to **volatile void**" | only the **pointee** |
+>
+> **Which the code uses:** `static void *volatile g_sink;` (line 129) — the volatile
+> *pointer*. Lines 125–128 document the trap explicitly.
+>
+> **Why it must be that one.** Because `g_sink` is volatile, every store
+> `g_sink = (void *)p` is an **observable side effect** the compiler is obliged to
+> emit. Emitting it requires the value of `p`. Producing `p` requires the whole
+> dependent chase. The volatile store is what **anchors the loop to reality**.
+>
+> **What `-O3` does if you write `volatile void *` instead.** The pointer variable is
+> then an ordinary non-volatile static, written but never read:
+>
+> 1. The store `g_sink = p` is **dead** → dead-store elimination removes it.
+> 2. With the store gone, `p` is unused → the loop `for (h...) p = *p;` computes
+>    nothing observable.
+> 3. **Dead-code elimination deletes the entire measured loop.** GCC is particularly
+>    willing to do this.
+>
+> You are then timing an empty region between two `get_ticks()` calls.
+>
+> **How to detect it from the output alone — three independent signatures:**
+>
+> 1. **Physically impossible latency.** Reported values near **~0 ns**. Anything
+>    below roughly 0.3 ns/hop is beneath the reciprocal-throughput floor of a single
+>    load on any real core — no machine can beat it, so the loop cannot be running.
+> 2. **A staircase with no steps.** Latency **flat and independent of working-set
+>    size**: the same figure at 4 KiB as at 512 MiB. The entire phenomenon the probe
+>    exists to observe would have vanished, which is far more diagnostic than the
+>    absolute value.
+> 3. **Invariance across machines.** The number would not change between the M1 and
+>    the Intel machine, because it reflects loop overhead rather than any hardware.
+>
+> **The framing:** *"A crash tells you something is wrong. This bug tells you
+> nothing — it hands you a beautiful flat line. That is why the declaration carries a
+> four-line comment rather than none."*
+
 **1.10** The timer on Apple Silicon ticks every ~41.7 ns; you report L1 hits of
 ~1.53 ns. Explain how measuring something 27× smaller than your clock's
 resolution is legitimate, and state the assumption that makes it valid.
+
+> **Answer.** The premise contains a hidden false assumption: **I never measure a
+> single access.** Correct that and the objection dissolves.
+>
+> **What is actually timed.** One timed window contains
+> `DEFAULT_MIN_HOPS = 1 << 20` = **1,048,576 hops** (`wss/__init__.py:44`), and the
+> per-access figure is `(c1 - c0) / hops` (`wss_probe.c:370`).
+>
+> | | Value |
+> |:---|---:|
+> | Total timed interval (2²⁰ × 1.53 ns) | 1,604,321 ns ≈ **1.6 ms** |
+> | In ticks of a 41.7 ns clock | ≈ **38,500 ticks** |
+> | Quantisation uncertainty | ±1 tick = ±41.7 ns |
+> | **Relative error on the total** | **±0.0026 %** |
+>
+> **Why the division adds nothing.** `hops` is an **exact integer** chosen by the
+> program, not a measured quantity. Dividing a measurement with ±0.0026 % error by an
+> exact constant leaves ±0.0026 % error. No precision is invented.
+>
+> **The analogy for the examiner.** You cannot measure one sheet of paper with a
+> millimetre ruler. Stack 1,000 sheets, measure 52 mm, divide → 0.052 mm per sheet.
+> You did not improve the ruler; you improved the **signal-to-resolution ratio**.
+>
+> **The assumption that makes it valid: per-hop cost must be *stationary* across the
+> window.** Amortisation reports a mean; if the cost drifts within the window, the
+> drift is silently folded into that mean and is invisible in the output. Three
+> mechanisms protect it, against three distinct threats:
+>
+> | Threat | Scope | Protection |
+> |:---|:---|:---|
+> | Cold-start transient (compulsory misses, TLB fill) | **within** a window | **Warm-up traversal** (`wss_probe.c:356`) — one full pass before timing, so start and end of the window cost the same |
+> | Random interference (interrupt, background process) | one window | **Minimum over 5 repeats** — interference only *adds* time, so the minimum discards disturbed windows |
+> | Thermal / DVFS drift over the ~3-minute sweep | **across** the sweep | **Seed-shuffled size order** (`wss/__init__.py:93`) — see Q1.11 |
+>
+> **The one-line answer:** *"I am not claiming 1.53 ns resolution on a single event.
+> I am claiming 0.0026 % resolution on a 1.6 ms interval, then dividing by an exact
+> integer."*
 
 **1.11** Sweep order is seed-shuffled (`wss/__init__.py:93`) rather than
 ascending. What systematic bias does this remove, and what would the corrupted
 staircase have looked like?
 
+> **Answer.** It removes the **confounding of working-set size with elapsed time**.
+>
+> **The bias.** A full sweep takes ~3 minutes. Over that period the die heats,
+> DVFS may lower the clock, and thermal throttling may engage — so **later
+> measurements are taken on a slower machine**. In ascending order, "later" and
+> "larger" are *perfectly correlated*. Drift caused purely by time therefore appears
+> as latency that **increases monotonically with working-set size** — which is
+> precisely the signature of a real cache boundary. The confound is not noise; it is
+> a systematic effect wearing the costume of the signal.
+>
+> **What the corrupted staircase would look like.** Two failure modes, both
+> plausible enough to be believed:
+>
+> 1. **A spurious extra step** at the large end, read as a deeper cache level that
+>    does not exist — a false positive, which would damage the precision metric.
+> 2. **An inflated DRAM plateau** — the true plateau tilted upward, so the reported
+>    DRAM latency is a hardware figure contaminated with thermal history.
+>
+> **Why it is worse than ordinary noise:** it is **reproducible**. Repeating the
+> sweep in the same ascending order reproduces the same false step, so the usual
+> defence — "run it again and see if it persists" — actively *confirms* the artefact.
+>
+> **What shuffling achieves.** It does not remove drift; it **decorrelates drift from
+> size**, converting systematic bias into random noise. Noise is then exposed by the
+> min–max band across sweeps, whereas bias would not have been. The permutation is
+> drawn from `np.random.default_rng(seed)` with a fixed default seed (42), so the
+> order is **randomised but reproducible**, and results are sorted by size for output.
+>
+> This is the experimental-design point of the probe: *randomise the assignment order
+> so that a nuisance variable cannot masquerade as the treatment effect.*
+
 **1.12** The probe reports the **minimum** over five repeats. Justify this against
 the obvious alternative (the mean). What does the minimum hide, and where in the
 dissertation is that cost acknowledged?
+
+> **Answer.** The justification is that measurement error here is **one-sided**.
+>
+> **Why the minimum.** For a microbenchmark, every source of interference — a timer
+> interrupt, a context switch, a competing thread, an SMT sibling, a migration —
+> can only **add** time. Nothing makes a load complete faster than the hardware
+> permits. The observed value is therefore *true latency + non-negative noise*, so
+> the **minimum is the best estimator of the underlying floor**, and it converges to
+> it as repeats increase. Standard lmbench practice [9].
+>
+> **Why not the mean.** The mean estimates "latency on this machine under whatever
+> system noise happened during this run" — a property of the *environment*, not of
+> the *hardware*, and not reproducible across machines or days. With one-sided
+> contamination the mean is biased upward by construction, and a single 10 ms
+> scheduler event across five repeats moves it substantially.
+>
+> **What the minimum hides: variability.** A lower envelope says nothing about how
+> often the machine is disturbed, or how it behaves under contention. Two machines
+> with identical minima can differ sharply in practice. §3.1 (step 5) and §5.5
+> acknowledge this, which is why the reported figures are **never quoted bare** —
+> they carry a **min–max band across independent sweeps**.
+>
+> **The point worth volunteering, because it shows estimator-level understanding:**
+>
+> > The minimum is the right statistic for a **latency** and the **wrong** statistic
+> > for a **boundary**.
+>
+> §5.3 documents this concretely. Detecting on the *aggregate* minimum-over-sweeps
+> curve pulls the Intel L3 knee inward to **13.9 MiB (−30.4 %)**, whereas **9 of the
+> 10 individual sweeps put it at 19.7 MiB (−1.5 %)**. A lower envelope biases a
+> *knee* inward, because in the noisy L3→DRAM transition the minimum systematically
+> favours the faster, smaller-looking side. The correction was to detect **per sweep**
+> and take the **median across sweeps** (`scripts/capacity_ci.py`) — the minimum
+> remains correct for the latency column, and the two must not be conflated.
+>
+> Volunteering that you *found and fixed* this is worth more than defending the
+> minimum in the abstract: it shows the estimator was interrogated, not assumed.
 
 **1.13** Runtime calibration measures the tick rate against the OS monotonic
 clock. Why is this *more* correct than reading the nominal CPU frequency from
 `/proc/cpuinfo`, as the reference paper does — even on a machine where the TSC is
 invariant?
+
+> **Answer.** Three independent reasons, and the third is the decisive one because I
+> have a **measured counterexample**.
+>
+> **1. Portability.** `/proc/cpuinfo` is Linux-only; the paper itself concedes this
+> [1]. Auto-Echo runs on macOS and Windows, where the file does not exist. Any
+> approach that starts by parsing it cannot make the cross-platform claim.
+>
+> **2. It reads the wrong quantity.** The `cpu MHz` field reports the **current core
+> clock**, which is turbo- and DVFS-scaled and changes moment to moment. But
+> `rdtsc`/`cntvct` advance at the **invariant** reference rate, which is deliberately
+> *decoupled* from core frequency — that decoupling is exactly what makes the counter
+> usable as a timebase. Applying a core-clock figure to an invariant-TSC counter is a
+> **category error**: two different clocks.
+>
+> **3. Even on an invariant TSC, the nominal figure need not equal the tick rate.**
+> This is the counterexample. On the i5-13450HX:
+>
+> | | Value |
+> |:---|:---|
+> | Windows advertises (P-core **base** clock) | **2.40 GHz** |
+> | Runtime calibration measures (invariant TSC) | **0.383 ns/tick = 2.61 GHz** |
+> | **Discrepancy** | **8.8 %** |
+>
+> Both figures are correct; they describe different clocks. Had the framework taken
+> the advertised 2.40 GHz, **every latency in §5.3 would be inflated by 8.8 %**:
+>
+> | Level | Reported | Would have been |
+> |:---|---:|---:|
+> | L1 | 1.57 ns | 1.71 ns |
+> | L3 | 20.81 ns | 22.64 ns |
+>
+> **Why that error would have been undetectable.** Detected **capacities** are
+> working-set sizes and **never pass through the tick conversion**, so they would be
+> untouched — the validation against OS ground truth would still pass at 100 %
+> recall. The error would sit **entirely in the latency column**, where no internal
+> consistency check could expose it, and where a plausible-looking wrong number is
+> considerably more dangerous than an obviously wrong one.
+>
+> **How calibration works.** `calibrate()` counts hardware ticks over **~50 ms** of
+> the OS monotonic clock (`clock_gettime` on POSIX, `QueryPerformanceCounter` on
+> Windows) and divides. It **measures** the real rate rather than assuming one, needs
+> no configuration, and is correct on any platform. On Apple Silicon the exact
+> rational from `mach_timebase_info` (125/3 ≈ 41.667 ns) is used directly; an
+> independent calibration run reproduced that value to four significant figures,
+> confirming the mechanism the x86/Windows paths rely on.
+>
+> **The framing:** *"Runtime calibration is not a portability convenience — it is a
+> correctness requirement, and my own Intel machine supplies the 8.8 % counterexample
+> that proves it."*
 
 ---
 

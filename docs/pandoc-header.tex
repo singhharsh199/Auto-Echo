@@ -5,12 +5,8 @@
 % etoolbox), so the PDF builds on a stock installation with no tlmgr step.
 %
 % Three jobs:
-%   1. Supply the one glyph Latin Modern lacks -- U+2717 BALLOT X, used once, in
-%      Table 15's Match column. Declaring the character active and binding it to
-%      \ding{55} is what the newunicodechar package does internally; doing it
-%      directly avoids a dependency that the basic scheme does not ship, and is
-%      preferable to switching the whole document to a broad-coverage sans face
-%      for the sake of a single character.
+%   1. Supply the two glyphs Latin Modern lacks -- U+2717 BALLOT X and U+2713
+%      CHECK MARK -- used in the validation and ground-truth-provenance tables.
 %   2. Set tables at \footnotesize and tighten the inter-column padding. Pandoc
 %      sizes each p{} column as (\linewidth - 2*ncols*\tabcolsep) * fraction, so
 %      padding is subtracted from the content width before the proportions are
@@ -26,8 +22,27 @@
 
 \usepackage{pifont}
 
+% Latin Modern carries every glyph the document uses except these two dingbats
+% (U+2717 BALLOT X and U+2713 CHECK MARK), which appear in the validation and
+% ground-truth-provenance tables. Declaring the characters active and binding
+% them to pifont is what the newunicodechar package does internally; doing it
+% directly avoids a dependency absent from the TeX Live "basic" scheme, and is
+% preferable to switching the whole document to a broad-coverage sans face for
+% the sake of two characters.
 \catcode`✗=\active
 \def✗{\ding{55}}
+\catcode`✓=\active
+\def✓{\ding{51}}
+
+% Latin Modern's *text* face also lacks the relational operators, though its math
+% face carries them. Route them through \ensuremath so they typeset correctly
+% wherever they appear in prose or in a table cell.
+\catcode`≤=\active
+\def≤{\ensuremath{\leq}}
+\catcode`≥=\active
+\def≥{\ensuremath{\geq}}
+\catcode`≈=\active
+\def≈{\ensuremath{\approx}}
 
 % Latin Modern does carry the glyphs below, but declaring them costs nothing and
 % makes the build independent of which Latin Modern revision is installed.

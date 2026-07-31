@@ -5,6 +5,7 @@ import { MemoryMountain } from "./components/MemoryMountain";
 import { LevelCards } from "./components/LevelCards";
 import { ValidationPanel } from "./components/ValidationPanel";
 import { EstimatorPanel } from "./components/EstimatorPanel";
+import { ArchLens } from "./components/ArchLens";
 import { formatKiB } from "./lib/format";
 import { seriesColor } from "./lib/series";
 
@@ -190,7 +191,9 @@ export default function App() {
           <EstimatorPanel machine={primary} />
         </div>
 
-        <p className="colophon fade" style={{ "--i": 8 } as React.CSSProperties}>
+        <ArchLens />
+
+        <p className="colophon fade" style={{ "--i": 9 } as React.CSSProperties}>
           Built from <span className="mono">wss_curve.csv</span>,{" "}
           <span className="mono">wss_curves_all.csv</span> and{" "}
           <span className="mono">validation_report.md</span> in{" "}

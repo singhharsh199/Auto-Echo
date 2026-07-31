@@ -26,6 +26,8 @@ Usage::
 """
 
 import argparse
+import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -59,6 +61,15 @@ def main() -> None:
         default=None,
         help="nominal size in MiB of the deepest cache, to report the "
         "median capacity's error against it (e.g. 20 for a 20 MiB L3)",
+    )
+    ap.add_argument(
+        "--json",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="also write the per-sweep spread to PATH as JSON. The React "
+        "dashboard reads this so it reports the same per-sweep median "
+        "capacities as §5.3 rather than the aggregate-curve knee.",
     )
     args = ap.parse_args()
 
@@ -114,6 +125,50 @@ def main() -> None:
         )
         n_at_max = int((v == v.max()).sum())
         print(f"  {n_at_max}/{len(v)} sweeps detected {_human(v.max())}")
+
+    if args.json:
+        _write_json(args.json, args.all_csv, rule, runs, nlevels, modal, per_level)
+        print(f"\nwrote {args.json}")
+
+
+def _write_json(
+    path: Path,
+    source: str,
+    rule: str,
+    runs: list,
+    nlevels: list[int],
+    modal: int,
+    per_level: dict[int, list[float]],
+) -> None:
+    """Serialise the spread computed above; performs no detection of its own.
+
+    Emitted so the dashboard can display the *same* statistic the dissertation
+    reports. Both raw bytes and the rendered string are written: the string is
+    what §5.3's tables show, and re-deriving it downstream would risk a rounding
+    disagreement between the two artefacts over a value like 19.7 MiB.
+    """
+    payload = {
+        "source": Path(source).name,
+        "sweeps": len(runs),
+        "rule": rule,
+        "levelCountsPerSweep": [int(n) for n in nlevels],
+        "modalLevels": int(modal),
+        "levels": [
+            {
+                "index": i,
+                "name": NAMES[i] if i < len(NAMES) else f"L{i + 1}",
+                "medianBytes": float(np.median(per_level[i])),
+                "minBytes": float(np.min(per_level[i])),
+                "maxBytes": float(np.max(per_level[i])),
+                "medianText": _human(float(np.median(per_level[i]))),
+                "n": len(per_level[i]),
+                "perSweepBytes": [float(x) for x in per_level[i]],
+            }
+            for i in sorted(per_level)
+        ],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
 if __name__ == "__main__":

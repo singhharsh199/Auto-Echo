@@ -1,0 +1,41 @@
+{
+  "source": "wss_curves_all.csv",
+  "sweeps": 3,
+  "rule": "automatic (Silhouette count + penalty-free Dynp)",
+  "levelCountsPerSweep": [
+    3,
+    3,
+    3
+  ],
+  "modalLevels": 3,
+  "levels": [
+    {
+      "index": 0,
+      "name": "L1",
+      "medianBytes": 161280.0,
+      "minBytes": 161280.0,
+      "maxBytes": 161280.0,
+      "medianText": "157.5 KiB",
+      "n": 3,
+      "perSweepBytes": [
+        161280.0,
+        161280.0,
+        161280.0
+      ]
+    },
+    {
+      "index": 1,
+      "name": "L2",
+      "medianBytes": 14605312.0,
+      "minBytes": 10327552.0,
+      "maxBytes": 14605312.0,
+      "medianText": "13.9 MiB",
+      "n": 3,
+      "perSweepBytes": [
+        10327552.0,
+        14605312.0,
+        14605312.0
+      ]
+    }
+  ]
+}
