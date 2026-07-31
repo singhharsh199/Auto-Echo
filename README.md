@@ -69,13 +69,25 @@ it arrives.
 
 ### Prerequisites
 
-Python **3.11 or newer**, and a C compiler (the timing probe is a C extension):
+**For the pipeline** (the probe, the inference stage, the tests) — Python
+**3.11 or newer** and a C compiler, because the timing probe is a C extension:
 
 | Platform | Command |
 | :--- | :--- |
 | **macOS** | `xcode-select --install` |
 | **Debian / Ubuntu** | `sudo apt-get install -y build-essential python3-dev` |
 | **Windows** | Install *Desktop development with C++* (Visual Studio Build Tools) |
+
+**For the dashboard only** — **Node.js `20.19+` or `22.12+`** (Vite 8 and oxlint
+both require it; check with `node --version`). Nothing in the Python pipeline needs
+Node, so skip this if you only want to run the probe.
+
+| Platform | Command |
+| :--- | :--- |
+| **macOS** | `brew install node` |
+| **Debian / Ubuntu** | `curl -fsSL https://deb.nodesource.com/setup_22.x \| sudo -E bash - && sudo apt-get install -y nodejs` |
+| **Windows** | Download the LTS installer from [nodejs.org](https://nodejs.org) |
+| **Any platform** | Or use [nvm](https://github.com/nvm-sh/nvm): `nvm install 22 && nvm use 22` |
 
 ### Install
 
@@ -88,6 +100,8 @@ source .venv/bin/activate
 #    Windows PowerShell:  .\.venv\Scripts\Activate.ps1
 
 # 3. Install the package and compile the C extensions
+
+
 pip install -e .
 ```
 

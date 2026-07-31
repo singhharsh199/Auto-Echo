@@ -33,7 +33,7 @@ const MACHINES = [
     // The TEN-sweep huge-page run, which is the one §5.3 reports. `intel_i5_13450hx`
     // is the earlier three-sweep run and disagrees with the dissertation on every
     // latency (1.59/4.75/22.94/123.25 there vs 1.57/4.71/20.81/122.36 in Table 11);
-    // it is kept because it carries the lmbench cross-check of §5.6.
+    // it is kept because it carries the lmbench cross-check of §5.3.1.
     id: "intel",
     dir: "intel_ci",
     name: "Intel Core i5-13450HX",

@@ -52,6 +52,17 @@ privileged interfaces are the usual answer; neither is available to portable
 software reasoning about its own performance. This dissertation presents
 Auto-Echo, which answers the question from timing alone.
 
+The case for measuring rather than reading is made by describing the same two
+machines through **three lenses**: the vendor's system report, which names no cache
+at all; the operating system's topology descriptor as read by `lstopo`, which is
+accurate wherever the vendor filled in the table; and direct latency measurement.
+The second lens fails in two distinct ways that the third does not, and both are
+demonstrated here on real hardware — the descriptor is *incomplete* on the Apple M1,
+which never reports its System-Level Cache, and on the Intel part it is *complete but
+not behavioural*, since a correctly reported 20 MiB L3 proves unreachable under the
+default page size. Measurement is therefore not a less accurate substitute for the
+descriptor; it answers a different question.
+
 The work begins from a negative result. A naive probe that flushes a line, writes
 it and times the subsequent load fails on both ARM64 and x86-64, and the cause
 lies not in the instruction set but in the measurement design: writing a line
@@ -198,8 +209,9 @@ labels or thresholds, and (iii) validates its output against known hardware.
    estimators) and an Intel Raptor Lake core (L1/L2 recovered with default 4 KiB
    pages; the **full L1/L2/L3/DRAM hierarchy** recovered under a 2 MiB huge-page
    control that lifts the TLB/page-walk masking of the L3 — 3/3 documented caches
-   matched at 100% recall and precision, mean absolute capacity error 6.3% over ten
-   sweeps — with the provenance recorded that this depends on huge pages and that
+   matched at 100% recall and precision, mean absolute capacity error 6.3% across the
+   three matched caches over ten sweeps — with the provenance recorded that this
+   depends on huge pages and that
    the level count is stable on a quiet machine but neither cross-estimator
    unanimous nor stable under ambient load).
 5. An external validation of the *inference* layer, not merely the probe: applied
@@ -1119,7 +1131,7 @@ obtains node memory through `GetNumaAvailableMemoryNodeEx`, which returns the me
 *available* on the node at the instant of the query, not the quantity installed. The
 figure is therefore a snapshot of free memory during the run, which is unremarkable
 on a machine concurrently hosting the WSL 2 virtual machine used for the lmbench
-cross-check of §5.6 — WSL 2 reserves a large fraction of host RAM by default. Table 6
+cross-check of §5.3.1 — WSL 2 reserves a large fraction of host RAM by default. Table 6
 supplies the control that confirms this reading. No
 result in this chapter turns on the distinction. The sweeps reach 512 MiB, an order
 of magnitude below even the smaller figure; every capacity reported is a working-set
@@ -1222,8 +1234,11 @@ levels — a result on which all five estimators independently agree** (Table 9)
 | DRAM | — | 130.43 ns | 45.21–141.44 ns | — | — |
 
 **Both OS-documented caches (2/2) matched within a factor of two** (the matching
-tolerance; see §5.5), with **mean absolute capacity error 19.9%** over three
-sweeps. This should be read as "both documented capacities had a detected
+tolerance; see §5.5), with **mean absolute capacity error 19.9%** taken over every
+sweep and cache individually (three sweeps); the equivalent figure across the two
+matched caches as reported in Table 7 is **19.6%**. §5.4 defines both statistics and
+tabulates them for each machine, because they are not interchangeable. This should be
+read as "both documented capacities had a detected
 boundary within one octave", not as general 100% accuracy over a large validated
 set. L1 lands within 23% of the documented 128 KiB and the mid-cache boundary
 within 16.1% of the documented 12 MiB L2.
@@ -1846,6 +1861,22 @@ control, the **full L1 (~48 KiB) / L2 (~1.25 MiB) / L3 (~19.7 MiB) / DRAM** hier
 on the Intel i5-13450HX (§5.3). This is genuine cross-architecture evidence for the
 memory hierarchy — the core of the architecture-agnostic claim.
 
+**The two machines close the three-lens argument of §1, and they close it
+differently.** On the Apple M1 the third lens sees *more* than the second: `lstopo`
+stops at the 12 MiB L2, and the probe responds to a 13.9 MiB band it can only be
+reaching by using the undocumented System-Level Cache. That is the *incomplete-table*
+failure, and measurement is the only remedy because nothing was ever exported to read.
+On the Intel machine the third lens sees something *different* from the second, not
+more: `lstopo`'s 20 MiB L3 is exactly right, and under 4 KiB pages the probe still
+cannot reach it, because TLB reach — not cache capacity — is the binding constraint
+(§5.3). That is the *topology-is-not-behaviour* failure, and no descriptor could have
+predicted it, because the answer depends on the page size the allocation happens to
+use. §5.3.2 then supplies a third variant of the same lesson: under an eight-worker
+load the same silicon yields a sixfold smaller mappable L3, so what the probe recovers
+of a *shared* cache is a property of the running system rather than of the die. A
+table reports what a cache **is**; only measurement reports what a workload can
+**use**, and these two machines demonstrate the gap for opposite reasons.
+
 Two qualifications follow from the real x86 run. First, the earlier
 expectation (from *synthetic* Intel/AMD/VM curves) that the method would cleanly
 recover **four** L1/L2/L3/DRAM levels on x86 held **only under a huge-page control**,
@@ -1919,11 +1950,24 @@ each machine, and the hardware parameters that differ.**
 | Pages spanned by a 16 MiB working set | 1,024 | 4,096 |
 | Levels resolved (automatic) | 3 (L1 / L2+SLC / DRAM) | 4 (L1 / L2 / L3 / DRAM), 2 MiB huge pages; L3 masked on 4 KiB |
 | Caches matched (per-core ground truth) | 2/2 documented | 3/3 documented (huge pages); 2/3 on 4 KiB |
-| Mean absolute capacity error | 19.9 % (3 sweeps) | 6.3 % (median of 10 sweeps) |
+| Mean abs. capacity error, **across matched caches**† | 19.6 % | 6.3 % |
+| Mean abs. capacity error, **per-sweep mean**‡ | 19.9 % (3 sweeps) | 7.3 % (10 sweeps) |
 | Count stability, quiet machine | unanimous, std 0 (3 sweeps) | productive counter stable at 4 (std 0, 10 sweeps), ensemble not unanimous (Elbow/cost-knee = 2) |
 | Count stability, contaminated run | not tested | productive counter modal 7 (std 1.25) — §5.3.2 |
 | External cross-check vs lmbench | not run (no lmbench build) | same 4-tier shape; inference transfers (2/3 caches) — §5.3.1 |
 | Naive baseline (with `clflush`) | n/a (no ARM flush) | 2 tiers — fails to resolve (L1-residency + timer grid) |
+
+*†**Across matched caches**: the mean of the per-cache absolute errors printed in
+Tables 7 and 11, each computed from that level's median capacity — so the figure is
+reproducible directly from those tables ((23.0 + 16.1)/2 and (16.0 + 1.5 + 1.5)/3).
+‡**Per-sweep mean**: the mean absolute error over every sweep and every matched cache
+individually, which is what `validation_report.md` prints. The two differ because a
+single outlying sweep enters the second and is discarded by the median in the first —
+on the Intel run one sweep of ten placed the L3 at 13.9 MiB rather than 19.7 MiB
+(§5.3), which is the whole of the 6.3 % vs 7.3 % gap. Both are reported because
+neither is a substitute for the other: the first is the accuracy of the reported
+result, the second is the accuracy of a typical single run. **Comparisons between the
+two machines must be read within a row, never across rows.***
 
 **Sampling-density robustness.** §3.2.1 identifies a confound intrinsic to the
 Silhouette criterion: because it weights every observation equally, its value
@@ -2261,7 +2305,7 @@ memory" user right (no kernel module or driver). Remaining directions:
   **contention** — a controlled shared-L3 load collapses the detected knee to 3.5 MiB
   while the quiet ten-sweep run recovers 19.7 MiB in nine of ten sweeps (§5.3.2). What
   remains is to reproduce that on a machine whose L3 is *architecturally* less
-  contended (a different LLC topology — Hackenberg et al. [67] document how widely
+  contended (a different LLC topology — Hackenberg et al. [66] document how widely
   these differ across x86 generations), to sweep contention intensity rather than
   compare two levels of it, and to add performance-counter corroboration — including a
   direct core-frequency reading (`APERF`/`MPERF`), which the invariant TSC cannot
@@ -2409,7 +2453,8 @@ unsupervised code path recovered its per-core L1 (~48 KiB) and L2 (~1.25 MiB) bu
 TLB/page-walk latency masked the 20 MiB L3 and destabilised the automatic level
 count; enabling the 2 MiB huge-page control then removed the page-walk confounder and
 recovered the **full L1/L2/L3/DRAM hierarchy**, matching all three documented caches
-(3/3, 100 % recall and precision, mean absolute error 6.3 % across ten sweeps) with
+(3/3, 100 % recall and precision, mean absolute error 6.3 % across the three matched
+caches over ten sweeps — §5.4 defines the statistic) with
 the productive K-Means + Silhouette counter stable at four levels. That hierarchy was
 then checked against prior art rather than only against itself: lmbench's
 `lat_mem_rd`, built and swept on the same silicon, recovers the same four-tier
@@ -2431,6 +2476,21 @@ performance cores is the clearly-scoped remaining step. That the full hierarchy
 resolves *only* under huge pages is itself a finding, delimiting exactly where a
 user-space, single-core pointer chase can and cannot map a memory hierarchy, and what
 control lifts the limit.
+
+The three lenses introduced in §1 are, in the end, the clearest statement of what this
+work contributes. The **commercial** lens names no cache on either machine. The
+**software** lens is accurate wherever a vendor filled in the table — and on the Intel
+part it is entirely accurate, which this dissertation asserts rather than disputes;
+any argument for measurement resting on `lstopo` being *wrong* would be false. Its
+limit is that its chain of trust ends at what the OS was told, so it inherits every
+omission, and it can only ever describe the hardware as designed. The **physical**
+lens answers a different question — what this silicon does, on this run, at this page
+size, under this load — and the two machines show that the gap between the questions
+is not a technicality. On the M1 the gap is an entire ~8 MiB cache that no interface
+reports. On the Intel part it is a 20 MiB L3 that is documented, correct, and
+unreachable. Neither gap is visible to a table, and neither is discoverable by asking
+more politely; both require measurement. That is the case for the third lens, and it
+is a case for *complementing* the first two rather than replacing them.
 
 ---
 
@@ -2500,8 +2560,7 @@ control lifts the limit.
 [63] A. J. Scott and M. Knott, "A cluster analysis method for grouping means in the analysis of variance," *Biometrics*, vol. 30, no. 3, pp. 507–512, 1974.  
 [64] I. E. Auger and C. E. Lawrence, "Algorithms for the optimal identification of segment neighborhoods," *Bulletin of Mathematical Biology*, vol. 51, no. 1, pp. 39–54, 1989.  
 [65] B. Jackson, J. D. Scargle, D. Barnes, S. Arabhi, A. Alt, P. Gioumousis, E. Gwin, P. Sangtrakulcharoen, L. Tan, and T. T. Tsai, "An algorithm for optimal partitioning of data on an interval," *IEEE Signal Processing Letters*, vol. 12, no. 2, pp. 105–108, 2005.  
-[66] H. Ravichandran, W. T. Na, J. Lang, and M. Yan, "PACMAN: Attacking ARM pointer authentication with speculative execution," in *Proc. 49th Int. Symp. on Computer Architecture (ISCA)*, 2022, pp. 685–698.  
-[67] D. Hackenberg, D. Molka, and W. E. Nagel, "Comparing cache architectures and coherency protocols on x86-64 multicore SMP systems," in *Proc. 42nd Int. Symp. on Microarchitecture (MICRO)*, 2009, pp. 413–422.
+[66] D. Hackenberg, D. Molka, and W. E. Nagel, "Comparing cache architectures and coherency protocols on x86-64 multicore SMP systems," in *Proc. 42nd Int. Symp. on Microarchitecture (MICRO)*, 2009, pp. 413–422.
 
 ---
 

@@ -769,7 +769,7 @@ everything else sound like special pleading.
 detail from Results (shorten the lmbench passage) — **never cut Limitations.**
 
 **Before the viva.** Appendix A.3 declares that every reference was consulted by the
-author, and the bibliography grew from 24 to 67 entries late in the project. Either
+author, and the bibliography grew from 24 to 66 entries late in the project. Either
 read them or amend the clause. If asked "have you read Vila et al.?", you need an
 answer. That is an integrity question, not a technical one, and it carries more
 weight.
@@ -1900,54 +1900,555 @@ invariant?
 Evaluate this statement, and explain what PELT is actually used for in this
 project.
 
+> **Answer.** **False as stated, and the correction is the design's central move.**
+>
+> **What the productive path actually does** (`analysis.py:248`):
+>
+> ```python
+> k, _ = cluster_level_count(curve, max_k=kmax, algorithm="kmeans")
+> return rpt.Dynp(model="l2", min_size=min_size).fit(signal).predict(n_bkps=k - 1)
+> ```
+>
+> `Dynp` — dynamic programming — is asked for **exactly `k − 1` breakpoints**, where
+> `k` came from the clustering stage. It is **count-constrained** and therefore
+> **penalty-free**.
+>
+> **Why that matters.** PELT [6] takes a **penalty** parameter: raise it and you get
+> fewer segments, lower it and you get more. A penalty is a **hand-tuned threshold in
+> disguise**, and the project's headline claim is that the pipeline is
+> *zero-configuration and threshold-free*. Had PELT chosen the boundaries, that claim
+> would be false — the reported level count would be a consequence of a number the
+> author picked.
+>
+> **Where PELT is genuinely used:** as a **sensitivity instrument**, not a producer of
+> results. `penalty_sensitivity()` sweeps the penalty across 1.0 – 10.0 and reports how
+> the recovered count varies (Tables 5 and 10). On the Intel huge-page run the count is
+> **4 at every penalty from 1.0 to 10.0** — evidence that the segmentation is not
+> balanced on a knife-edge. The `--penalty` CLI flag honours an explicit value for
+> exactly this diagnostic.
+>
+> **The division of labour to state crisply:**
+>
+> | Stage | Tool | Chooses |
+> |:---|:---|:---|
+> | Count the levels | K-Means + Silhouette | **how many** |
+> | Localise the boundaries | `Dynp`, given that count | **where** |
+> | Sensitivity check only | PELT, penalty swept | *nothing reported* |
+>
+> **The trap:** if you concede PELT is productive, the examiner's next question is
+> "so what penalty did you choose, and why not a different one?" — and there is no
+> good answer to it. The correct answer is that the question does not arise.
+
 **2.2** State the contiguity lemma for 1-D *k*-means and prove it in two or three
 lines. Why does it collapse the search space from a Stirling number to a binomial
 coefficient?
 
+> **Answer.**
+>
+> **Lemma.** For points on the real line, every optimal *k*-means partition is
+> **contiguous in sorted order**: no cluster's convex hull contains a point assigned
+> to another cluster.
+>
+> **Proof (by exchange).** Suppose not. Then there exist $x_a < x_b < x_c$ with
+> $x_a, x_c \in C_1$ and $x_b \in C_2$. Since $x_b$ lies between two members of
+> $C_1$, it lies within $C_1$'s span, and because $C_1$'s centroid $\mu_1$ is a convex
+> combination of its members, $\mu_1$ also lies in $[x_a, x_c]$. Moving $x_b$ from
+> $C_2$ to $C_1$ changes the objective by
+> $(x_b-\mu_1)^2 - (x_b-\mu_2)^2$ plus the (non-positive) effect of recentring both
+> clusters. Because the assignment step of *k*-means assigns each point to its
+> **nearest** centroid at optimum, and $\mu_1$ is nearer to $x_b$ than $\mu_2$
+> whenever $x_b$ separates two $C_1$ members while $\mu_2$ lies outside $[x_a,x_c]$,
+> the exchange **strictly decreases** the within-cluster sum of squares. So the
+> assumed partition was not optimal. ∎
+>
+> **The combinatorial collapse.** Without the lemma, an optimal partition could be
+> *any* partition of $n$ items into $k$ non-empty blocks — a **Stirling number of the
+> second kind** $S(n,k)$, which grows super-exponentially ($k^n/k!$ to leading order).
+> With it, a partition is fully determined by **where you cut the sorted sequence**,
+> so it is a choice of $k-1$ cut positions from $n-1$ gaps:
+>
+> $$S(n,k) \;\longrightarrow\; \binom{n-1}{k-1}$$
+>
+> For the Intel curve ($n = 202$, $k = 4$): $S(202,4) \approx 10^{119}$ against
+> $\binom{201}{3} = 1{,}313{,}400$. And the binomial structure is not merely smaller —
+> it has **optimal substructure**, so DP solves it exactly without enumerating it at
+> all.
+>
+> **The framing:** *"One-dimensionality is not a simplification I assumed; it is a
+> property of the data — latency is a scalar — and the lemma converts it into an
+> exactness guarantee."*
+
 **2.3** Given that lemma, explain the dynamic-programming recurrence in
 `_exact_1d_kmeans`. What do the prefix-sum arrays `cs` and `cs2` buy you, and
 what would the complexity be without them?
+
+> **Answer.**
+>
+> **The recurrence.** Let $D[c][j]$ be the minimal within-cluster sum of squares for
+> partitioning the first $j$ sorted points into $c$ clusters, and $w(i,j)$ the SSE of
+> the single segment $x_i \dots x_{j-1}$. By the contiguity lemma the last cluster
+> must be a **suffix** $x_i \dots x_{j-1}$, so:
+>
+> $$D[c][j] \;=\; \min_{c-1 \le i < j} \Big( D[c-1][i] \;+\; w(i,j) \Big),
+> \qquad D[0][0] = 0$$
+>
+> In the code this is the inner loop, vectorised over all candidate splits $i$ at once:
+>
+> ```python
+> seg  = cs2[j] - cs2[i] - (s * s) / m        # SSE of xs[i:j], O(1) per candidate
+> vals = cost[c - 1, i] + np.maximum(seg, 0.0)
+> cost[c, j], split[c, j] = vals[best], i[best]
+> ```
+>
+> `split` records the arg-min so the assignment is recovered by **backtracking** from
+> $D[k][n]$, and one fill of the table yields **every** $k$ from 1 to `kmax` — which is
+> why the whole model-selection scan costs a single pass rather than one run per $k$.
+>
+> **What the prefix sums buy.** $w(i,j)$ is computed from the identity
+>
+> $$\mathrm{SSE}(i,j) \;=\; \sum x^2 \;-\; \frac{\left(\sum x\right)^2}{j-i}$$
+>
+> With `cs` (prefix sums of $x$) and `cs2` (prefix sums of $x^2$), both sums are a
+> **single subtraction**, so $w(i,j)$ is **$O(1)$** instead of $O(j-i)$.
+>
+> | | Cost of $w(i,j)$ | Total |
+> |:---|:---|:---|
+> | With prefix sums | $O(1)$ | **$O(k n^2)$** |
+> | Without | $O(n)$ | $O(k n^3)$ |
+>
+> At $n = 202$, $k_{\max} = 8$: ~$3\times10^5$ operations versus ~$6\times10^7$ — the
+> difference between instant and noticeable, and the reason the exact solver is
+> affordable enough to be the *default* rather than an opt-in.
+>
+> **One implementation detail worth volunteering:** `np.maximum(seg, 0.0)` clamps the
+> segment cost at zero. The identity above is algebraically non-negative, but in
+> floating point a near-zero-variance segment (an L1 plateau, where every point is
+> almost identical) can produce a **small negative** value through catastrophic
+> cancellation. Un-clamped, that would make the DP prefer spurious extra clusters
+> inside a flat plateau — a numerical artefact masquerading as a cache boundary.
 
 **2.4** Lloyd's algorithm reached the *same answer* as the exact DP at the
 selected *k* on both machines. If the result is identical, what did the migration
 actually buy — and why does the dissertation say so explicitly rather than
 claiming an accuracy improvement?
 
+> **Answer.** It bought a **guarantee**, not a number — and saying so is the point.
+>
+> **What the audit found** (`scripts/verify_kmeans_optimality.py`, Table 1):
+>
+> | Machine | Lloyd optimal at | Lloyd sub-optimal at | Selected $k$: Lloyd | Selected $k$: exact |
+> |:---|:---|:---|:---:|:---:|
+> | Apple M1 | $k$ = 2,3,4,7,8 | $k$ = 5 (+2.9 %), 6 (+1.4 %) | **3** (sil. 0.894) | **3** (sil. 0.894) |
+> | Intel i5 | $k$ = 2,3,4,5 | $k$ = 6 (+2.0 %), 7 (+0.4 %), 8 (+0.5 %) | **4** (sil. 0.935) | **4** (sil. 0.935) |
+>
+> Lloyd **did** miss the global optimum — but only at $k \ge 5$, beyond where the
+> Silhouette peaked on either machine. So the selected answer was unchanged.
+>
+> **What the migration bought, precisely — three things, none of them accuracy:**
+>
+> 1. **Optimality becomes a theorem, not an observation.** Lloyd is a local-search
+>    heuristic; it agreed *here*, on *these two* curves. The DP is provably optimal
+>    on **every** input, so the claim generalises to the next machine, which is what a
+>    method paper must be able to say.
+> 2. **Determinism.** No seeding, no `n_init` restarts, no `random_state`. Two runs on
+>    the same curve are **bit-identical by construction rather than by convention** —
+>    which matters because §5 reports standard deviations across sweeps, and any
+>    solver-induced variance would contaminate a *hardware* variability measurement.
+> 3. **One removed hyperparameter.** `n_init` and `max_iter` are tuning knobs, and the
+>    project's claim is zero-configuration. Deleting them is a claim-level improvement.
+>
+> **Why the dissertation states this rather than claiming accuracy.** Because claiming
+> an accuracy improvement would be **false**, and trivially checkable — the selected
+> $k$ and the Silhouette scores are identical to three decimal places in Table 1.
+> Overclaiming here would cost more credibility than the honest version gains, and the
+> honest version is the stronger methodological point anyway: **the value of an
+> exactness guarantee is that you no longer have to check.** Reporting that Lloyd
+> happened to agree is itself evidence that the migration was audited rather than
+> assumed.
+
 **2.5** Both the clustering objective and the segmentation objective are
 monotonically non-increasing in *k*. Explain why this means neither can select
 its own *k*, and enumerate the three families of solution to that problem.
 
+> **Answer.**
+>
+> **The monotonicity.** Within-cluster sum of squares (and segmentation cost) can
+> never increase when $k$ does: any $k$-partition is achievable by a $(k{+}1)$-solver
+> that simply splits one cluster and re-optimises, so
+> $\mathrm{cost}(k{+}1) \le \mathrm{cost}(k)$. At $k = n$ the cost reaches **exactly
+> zero** — every point is its own cluster.
+>
+> **Why that forbids self-selection.** "Choose the $k$ that minimises the objective"
+> therefore always returns $k = n$. The objective measures **fit**, and fit alone
+> cannot distinguish structure from memorisation — it is the classical
+> overfitting problem in its purest form. On the Intel curve that answer would be
+> "202 memory levels", which is not merely wrong but *degenerate*: the criterion has
+> no interior optimum to find.
+>
+> **The three families of solution:**
+>
+> | Family | Mechanism | Instance | Cost |
+> |:---|:---|:---|:---|
+> | **1. Penalise complexity** | add a term growing in $k$ and minimise the sum | PELT penalty; BIC; AIC | introduces a **hyperparameter** — the penalty *is* the answer |
+> | **2. Find a knee** | look for where marginal improvement collapses | Elbow method; cost-knee | knee detection is itself heuristic and often ambiguous |
+> | **3. Use a non-monotone criterion** | score a property that *worsens* if $k$ is too large | **Silhouette**; Gap statistic | needs a criterion that genuinely has an interior maximum |
+>
+> **What this project does.** Family 3 for the count (Silhouette), then Family 1's
+> tool used *without* its penalty — `Dynp` given the count from Family 3 — for the
+> boundaries. Family 1 (PELT) appears only as a sensitivity check, and Family 2
+> (Elbow, cost-knee) only as independent cross-checks, where they visibly under-count
+> on the Intel part (both return 2 against an expected 4).
+>
+> **The framing:** *"An objective that is monotone in its own parameter cannot choose
+> that parameter. So I did not ask it to — I chose a criterion that is not monotone."*
+
 **2.6** Why is the Silhouette coefficient able to select *k* without a penalty
 term when inertia cannot? What property of the Silhouette is doing the work?
+
+> **Answer.** Because the Silhouette is **not monotone in $k$** — it has a genuine
+> **interior maximum** — and that non-monotonicity is intrinsic rather than imposed.
+>
+> **The mechanism.** For point $i$, with $a(i)$ its mean distance to its own cluster
+> and $b(i)$ its mean distance to the nearest *other* cluster:
+>
+> $$s(i) = \frac{b(i) - a(i)}{\max\{a(i),\, b(i)\}} \in [-1, 1]$$
+>
+> The score is the mean of $s(i)$. The crucial feature is that it balances **two
+> competing quantities**:
+>
+> | As $k$ increases | $a(i)$ (cohesion) | $b(i)$ (separation) | Silhouette |
+> |:---|:---|:---|:---|
+> | too few clusters | large (mixed levels) | large | low |
+> | **correct $k$** | **small** | **large** | **maximal** |
+> | too many clusters | small | **collapses** — a plateau split in two puts a near-identical cluster right next door | low |
+>
+> Inertia only ever measures $a(i)$, which improves without limit. The Silhouette
+> measures $a$ *against* $b$, and $b$ **degrades** once you split real plateaus.
+> Over-clustering is punished by the criterion's own structure, so no external penalty
+> is needed. That is precisely what "threshold-free" means here.
+>
+> **The evidence it is working.** On the Intel huge-page curve the Silhouette peaks
+> **sharply** at $k = 4$ with 0.933, up from 0.885 on 4 KiB pages — the recovered L3
+> plateau makes the partition genuinely better separated, and the criterion registers
+> it. A peak, not a plateau or a monotone climb.
+>
+> **The honest caveat to volunteer:** the Silhouette's freedom from a penalty is
+> bought at the price of a different assumption — that every observation should count
+> equally. Q2.7 is that bill arriving.
 
 **2.7** The Silhouette weights every observation equally. Explain precisely why
 that is a threat to this project's central claim, and describe the experiment in
 §5.4 that tests it. Was the threat realised?
 
+> **Answer.** This is the sharpest internal threat in the dissertation, and it is
+> raised by the author rather than left for the examiner.
+>
+> **The threat, stated precisely.** The Silhouette averages $s(i)$ over points, so a
+> cluster's influence is proportional to **how many points fall in it**. But the
+> number of points in a level is fixed by the **sweep's geometric grid**, not by the
+> hardware: a level spanning more octaves receives proportionally more samples. So in
+> principle the selected $k$ could be an artefact of **the experimenter's chosen
+> resolution** — which would make the headline claim ("the count is chosen by the
+> data") circular, because the count would partly reflect a decision the author made.
+>
+> This is a **sharper** threat than the change-point penalty sensitivity, because the
+> penalty is never used productively whereas the sampling grid always is.
+>
+> **The experiment (Table 20, `scripts/sampling_density_sweep.py`).** Re-run the probe
+> **end to end** at 5, 10 and 20 points per octave on both machines — not
+> subsampled, so each row is an independent sweep — and check whether the selected
+> count moves:
+>
+> | Machine | Points/octave | Curve points | Selected $k$ | Silhouette |
+> |:---|:---:|:---:|:---:|:---:|
+> | Apple M1 | 5 | 94 | **3** | 0.912 |
+> | Apple M1 | 10 | 182 | **3** | 0.898 |
+> | Apple M1 | 20 | 348 | **3** | 0.896 |
+> | Intel i5 | 5 | 104 | **4** | 0.929 |
+> | Intel i5 | 10 | 202 | **4** | 0.934 |
+> | Intel i5 | 20 | 388 | **4** | 0.932 |
+>
+> **Was the threat realised? No.** The selected count is **invariant** across a
+> **four-fold** change in density on both machines, spanning 94–388 points. Note the
+> 20-points-per-octave Intel row in particular: it lies *above* the original source
+> grid, so it **could not have been subsampled** from the §5.3 curve — it closes the
+> one gap an earlier version of the table had.
+>
+> **How to present it:** *"I identified a way my own criterion could have produced a
+> circular result, designed the experiment that would expose it, ran it at four times
+> the density, and the count did not move. The threat is real in principle and
+> refuted in practice on these two machines."* Note the final clause — it is refuted
+> **on this hardware**, not in general.
+
 **2.8** Why is segmentation performed on **log**-latency rather than raw
 nanoseconds? Work through what happens to the L1→L2 step versus the L2→DRAM step
 under a squared-error cost if you omit the log.
+
+> **Answer.** Because an $\ell_2$ cost on raw nanoseconds optimises for the **deepest**
+> boundary and is nearly blind to the shallow ones.
+>
+> **The arithmetic, on the real M1 numbers** (1.53 → 9.19 → 130.43 ns):
+>
+> | Step | Raw difference | Squared (∝ cost reduction) | Log₂ difference |
+> |:---|---:|---:|---:|
+> | L1 → L2 | 7.66 ns | ~59 | **2.59 octaves** |
+> | L2 → DRAM | 121.24 ns | ~14,700 | **3.83 octaves** |
+> | **Ratio** | **15.8×** | **≈ 250×** | **1.5×** |
+>
+> **What goes wrong without the log.** A squared-error segmenter allocates breakpoints
+> where they reduce cost most. On raw values the L2→DRAM transition is worth roughly
+> **250×** more than L1→L2. Given a limited budget of breakpoints, the optimiser
+> spends them **inside the DRAM region** — splitting a single physical plateau to
+> shave its residual variance — while leaving the entire L1→L2 boundary unplaced. The
+> L1 cache, the fastest and most important level, becomes the **cheapest to ignore**.
+>
+> **What the log fixes.** Caches are laid out **multiplicatively** — each level is
+> some factor larger and slower than the last — so the physically meaningful quantity
+> is a **ratio**, not a difference. Taking logs converts ratios to differences, so a
+> 6× step costs the same whether it happens at 1.5 ns or at 130 ns. The cost function
+> is then matched to the structure of the phenomenon.
+>
+> ```python
+> signal = np.log(np.maximum(y, LOG_FLOOR_NS)).reshape(-1, 1)   # analysis.py:287
+> ```
+>
+> `LOG_FLOOR_NS = 1e-6` guards $\log(0)$, which would be $-\infty$ and would poison the
+> whole DP table. It is a **numerical guard, not a tuning knob** — no measurable
+> latency approaches it, so it never binds on real data.
+>
+> **The one-line answer:** *"Latency spans two orders of magnitude and cache sizes are
+> geometric, so the log is not a transform applied to the data — it is the space the
+> data actually lives in. The reported capacity errors are quoted in octaves for the
+> same reason."*
 
 **2.9** BIC is the natural criterion for a Gaussian mixture, yet the project
 scores the GMM by Silhouette instead. Give both reasons, and explain the
 variance-heterogeneity argument with reference to the Intel L1 and DRAM bands.
 
+> **Answer.** Two reasons, one methodological and one empirical. Concede the premise
+> first — **BIC genuinely is the natural criterion** for a likelihood model, and this
+> is a deliberate trade rather than an oversight.
+>
+> **Reason 1 — holding the criterion fixed isolates the model.** §5 *ranks* five
+> estimators against one another. K-Means has **no likelihood**, so scoring it by BIC
+> would require assuming an implied spherical, equal-variance Gaussian that the data
+> does not support. Scoring the mixture by BIC while scoring K-Means by Silhouette
+> would then **confound the model with the criterion**: a difference in the ranking
+> could be caused by either, and the comparison could not attribute it. Since the
+> comparison of interest is *model vs model*, the criterion is held constant.
+>
+> **Reason 2 — BIC is badly behaved on this data specifically.** Within-plateau
+> variance is **extremely heterogeneous across levels**:
+>
+> | Intel band | p5–p95 spread |
+> |:---|---:|
+> | L1 | **0.38 ns** (1.57–1.69, tight) |
+> | DRAM | **26 ns** (62.66–128.36, wide) |
+>
+> That is a **68-fold** difference in dispersion between two components of the same
+> mixture. A Gaussian mixture free to fit components of such disparate variance is
+> **rewarded by BIC** for placing several narrow components inside one physically
+> single plateau: each narrow component buys a large likelihood gain for a fixed
+> parameter penalty, so the penalty never bites where it should. The failure mode is
+> not hypothetical — the mixture already shows it, returning a **modal five** levels
+> against an expected four on the Intel part.
+>
+> **Why the Silhouette resists this.** It is a **geometric** criterion, scoring
+> separation relative to cohesion rather than likelihood-per-parameter. Splitting a
+> plateau places two near-identical clusters adjacent to each other, which **collapses
+> $b(i)$** and drives the score down — regardless of how much likelihood the split
+> bought.
+>
+> **The concession that makes it credible:** the dissertation states that reporting
+> GMM+BIC as a *further independent cross-check* remains a reasonable extension (§6).
+> That is the right posture — the choice is defended, not claimed to be the only
+> defensible one.
+
 **2.10** DBSCAN needs no *k*, which sounds ideal here. Why is it relegated to a
 cross-check rather than promoted to the productive path? What does this reveal
 about what "threshold-free" actually claims?
+
+> **Answer.** Because **DBSCAN does not remove the free parameter — it relocates it**,
+> and relocating it makes it *worse*, not better.
+>
+> **What DBSCAN trades.** It derives the cluster count from density instead of taking
+> it as input, but in exchange it requires:
+>
+> | Parameter | Meaning | Units |
+> |:---|:---|:---|
+> | `eps` | neighbourhood radius | **the data's own units** — log-nanoseconds here |
+> | `min_samples` | points needed to form a dense region | count |
+>
+> `eps` is the killer. It is **dimensioned in latency**, so a value tuned on the M1
+> (L1 ≈ 1.53 ns, DRAM ≈ 130 ns) encodes that machine's specific latency ratios. Ship
+> it to a machine with a different spread and it silently splits or merges levels.
+> `k`, by contrast, is *dimensionless* — and the project does not even supply it, since
+> the Silhouette selects it.
+>
+> **So the exchange is a bad one:**
+>
+> | | K-Means + Silhouette | DBSCAN |
+> |:---|:---|:---|
+> | Free parameters | `max_k = 8` (a **search bound**, not a threshold) | `eps` **and** `min_samples` |
+> | Units | dimensionless | **latency-valued** |
+> | Portable across machines? | yes | no — `eps` must be retuned |
+>
+> Adopting DBSCAN would put a hand-tuned, machine-specific, latency-dimensioned
+> constant on the **productive** path — destroying exactly the claim the design exists
+> to support.
+>
+> **What it reveals about "threshold-free".** The claim is **not** "this pipeline has
+> no constants". `max_k = 8`, `min_size = 3` and `LOG_FLOOR_NS = 1e-6` all exist. The
+> claim is narrower and defensible:
+>
+> > No constant whose value **determines a reported result** is set by hand. `max_k`
+> > bounds a search the Silhouette resolves inside; `min_size` is a structural
+> > minimum; `LOG_FLOOR_NS` is a numerical guard that never binds on real data. None
+> > of them, moved, changes the answer — whereas `eps` and a PELT penalty *are* the
+> > answer.
+>
+> **Why keep DBSCAN at all?** Because it is a genuinely **independent** cross-check:
+> it reaches the count by a different mechanism (density, not variance), so its
+> agreement is informative rather than circular. It returns **3 on the M1 and 4 on the
+> Intel part**, matching the productive path at every sampling density in Table 20 —
+> which is worth much more as corroboration than it would be worth as a producer.
 
 **2.11** The counting step is order-ignoring and the localisation step is
 order-respecting. Defend this division of labour on the grounds of *sufficient
 statistics*, and rebut the objection that discarding order throws away
 information.
 
+> **Answer.** The two stages ask **different questions**, and each uses exactly the
+> statistic sufficient for its own.
+>
+> | Stage | Question | Sufficient statistic | Order needed? |
+> |:---|:---|:---|:---|
+> | **Count** (K-Means) | *How many distinct latency regimes exist?* | the **multiset** of latency values | **no** |
+> | **Localise** (`Dynp`) | *At which working-set size does each regime end?* | the **sequence** in WSS order | **yes** |
+>
+> **Why counting does not need order.** "How many plateaus are there?" is a question
+> about the **distribution** of latency values, not their arrangement. The M1's values
+> cluster around 1.53, 9.19 and 130 ns; that there are three modes is visible in a
+> histogram with the *x*-axis thrown away entirely. The multiset is therefore
+> **sufficient** for the count — and using only a sufficient statistic is a virtue,
+> not a loss, because anything beyond it can only add variance.
+>
+> **Why localisation does need order.** "Where is the L2 boundary?" is inherently a
+> statement about position along the WSS axis, so `Dynp` operates on the ordered
+> signal and returns **contiguous segments** in sweep order.
+>
+> **Rebutting the objection — three points, strongest last:**
+>
+> 1. **Nothing is discarded from the pipeline**, only from *one stage*. The order is
+>    still present and is used by the stage whose question requires it. The count is
+>    handed to `Dynp`, which then applies it in the ordered domain.
+> 2. **Robustness.** An order-ignoring counter is immune to a class of failure an
+>    order-respecting one is not. A single anomalous point — an interrupt landing
+>    mid-window — is one more sample in a cluster, not a candidate breakpoint. The
+>    contaminated run of §5.3.2 shows the cost of this failing: the ensemble's
+>    order-respecting members become the least stable.
+> 3. **The independence argument, which is the real payoff.** Because the counter
+>    never sees order and the localiser never chooses the count, the two cannot
+>    conspire. §5.3's report makes this explicit: the change-point cross-check *"uses
+>    the cost-knee criterion, which is **not** seeded by the Silhouette k, so its
+>    agreement is genuine rather than circular."* Had one stage done both jobs, every
+>    agreement between them would be self-confirmation.
+>
+> **The framing:** *"This is not a pipeline that discards order. It is a pipeline in
+> which order is used exactly once, by the stage that needs it — which is what makes
+> the cross-checks independent."*
+
 **2.12** Grønlund et al. [60] give an O(n log n) algorithm for the same problem;
 the code implements O(kn²). Is that a defect? Justify your answer with the actual
 input sizes.
 
+> **Answer.** **No** — and the justification must be quantitative, not a shrug.
+>
+> **The actual inputs:**
+>
+> | Machine | $n$ (curve points) | $k_{\max}$ | $O(k n^2)$ operations |
+> |:---|---:|---:|---:|
+> | Apple M1 | 182 | 8 | ~2.6 × 10⁵ |
+> | Intel i5 | 202 | 8 | ~3.3 × 10⁵ |
+> | Densest sweep (Table 20) | 388 | 8 | ~1.2 × 10⁶ |
+>
+> A million vectorised NumPy operations is **milliseconds**. Against that, the probe
+> itself takes **~3 minutes** per sweep: 2²⁰ hops × 5 repeats at every one of ~200
+> sizes. The inference stage is therefore **four to five orders of magnitude** below
+> the measurement stage — asymptotically irrelevant at these sizes, since the constant
+> factors and the $O(n)$ term dominate long before $n$ grows enough for $n^2$ to bite.
+>
+> **When it *would* become a defect.** $n$ is set by the sweep's octave span and
+> points-per-octave. To reach $n \sim 10^5$ — where $n^2$ starts to hurt — you would
+> need ~5,000 points per octave, which would take **days** to measure. The
+> measurement cost grows with $n$ too, and grows *faster in wall-clock*, so the
+> analysis can never become the bottleneck by this route.
+>
+> **The engineering judgement to state:** optimising a millisecond stage that sits
+> behind a three-minute stage is **premature optimisation**, and it would cost
+> something real. The $O(kn^2)$ DP is ~40 lines, readable, and auditable against
+> brute-force enumeration — the test suite verifies it against **exhaustive
+> enumeration including non-contiguous partitions**, which tests the contiguity lemma
+> itself. Grønlund's algorithm relies on the objective's **concave Monge / totally
+> monotone** structure (SMAWK-style search), which is materially harder to implement
+> correctly and to verify. For a dissertation whose claim is *provable optimality*,
+> a correct-and-checkable implementation is worth more than an asymptotic improvement
+> that no input reaches.
+>
+> **The framing:** *"I cite Grønlund because the better bound exists and I should be
+> seen to know it. I did not implement it because at $n = 202$ it would trade
+> auditability for a saving I cannot measure."*
+
 **2.13** A hostile examiner says: "Your level count is stable with std 0.00, but
 that is one run on a quiet machine." How do you respond, and what does
 `data/intel_l3_quiesced/` show?
+
+> **Answer.** **Concede it immediately and completely — the examiner is right, and the
+> dissertation already says so in stronger terms than the question does.**
+>
+> **The concession.** The std 0.00 in Table 13 is a property of a **quiet machine**,
+> not of the part. It says the estimator is reproducible under favourable conditions.
+> It does **not** say the estimator is robust.
+>
+> **What `data/intel_l3_quiesced/` shows — and it is worse than the examiner
+> suggests.** That directory holds a three-sweep *unloaded* run captured as the matched
+> control immediately before the loaded run of §5.3.2. It is **not** the clean §5.3
+> baseline, and its own dispersion gives it away:
+>
+> | | `intel_l3_quiesced` | `intel_ci` (§5.3, genuinely quiet) |
+> |:---|:---|:---|
+> | L1 band, p5–p95 | **1.57–3.52 ns** | 1.57–1.69 ns |
+> | Deepest band | 21.96–**116.71 ns** | 14.53–25.70 ns |
+> | Levels per sweep | **5, 5, 4** | 4 in 10/10 |
+> | L3 knee | 13.9, 9.85, 9.85 MiB | 19.7 MiB (9/10) |
+> | Silhouette count | modal **7**, mean 5.33, **std 1.25** | mean 4.00, **std 0.00** |
+> | Ensemble rank | **last of five** | first of five |
+>
+> Something was competing with the probe throughout. So on a contaminated run the
+> productive counter **over-counts** — modal seven against an expected four — and
+> becomes the **least stable member of its own ensemble**, precisely inverting its
+> ranking on a quiet machine.
+>
+> **Why this strengthens rather than weakens the submission — four points:**
+>
+> 1. **It is reported, not buried.** The run is committed, the numbers are in Table 18,
+>    and the limitation is carried into §5.5. It would have been trivially easy to keep
+>    only the good run.
+> 2. **The terminology is corrected.** The dissertation states that "quiescent" names
+>    an **intent** rather than a verified state, which is why the row is labelled *by
+>    run* rather than by condition. That is a level of precision the examiner's
+>    question has not yet reached.
+> 3. **A quiet reference is shown alongside it.** The ten-sweep `intel_ci` run is
+>    presented as the genuinely quiet comparator, so the reader can see both.
+> 4. **It generalises the §5.3.2 finding.** Contention degrades not only the recovered
+>    *capacity* (a sixfold under-read of the shared L3) but the *level count* itself.
+>    Both are properties of the running system rather than of the die — which is the
+>    third lens's whole point (§1, §5.4).
+>
+> **The sentence to have ready:** *"You are right, and I would go further: I have a run
+> that shows exactly the failure you are describing, it is in the repository, and it
+> is in the dissertation as a limitation rather than an appendix. What I claim is that
+> the count is stable on a quiet machine and that I can tell you when it is not."*
 
 ---
 
@@ -2093,7 +2594,7 @@ Explain why build artefacts in a submitted repository are a problem, and identif
 two others that are correctly excluded by `.gitignore`.
 
 **5.12** Appendix A declares that no reference was included on the basis of an
-AI-generated description. The bibliography grew from 24 to 67 entries very late in
+AI-generated description. The bibliography grew from 24 to 66 entries very late in
 the project. Explain the integrity obligation this creates and how you discharged
 it.
 
